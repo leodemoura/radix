@@ -8,13 +8,221 @@ import Radix.Eval.Stmt
 
 /-! # Constant Folding
 
-Fold constant expressions: `3 + 4 → 7`, `true && x → x`, etc.
-Includes correctness proof showing the optimization preserves semantics.
+Fold constant expressions: `3 + 4 → 7`, `true && e → e`, etc.
+Includes algebraic identity simplifications (e.g. `e + 0 → e`) guarded
+by structural type inference, with a correctness proof that the
+optimization preserves semantics.
+
+## Identity vs. absorb rules
+
+Identity simplifications like `e + 0 → e` are sound with a type guard: when
+we know `e` produces a `uint64` (if it succeeds at all), then
+`BinOp.eval .add v (.uint64 0) = some v`.
+
+Absorb simplifications like `e * 0 → 0` are NOT sound without guaranteeing
+that `e.eval σ` succeeds: if `e.eval σ = none`, the original expression
+produces `none` but the simplified one produces `some (.uint64 0)`.  Since
+`Expr.inferTag` cannot guarantee evaluation success (only the result type
+when it does succeed), absorb rules are omitted.  They require a full type
+system with totality guarantees to be sound.
 -/
 
 namespace Radix
 
+/-! ## Value type tags and structural type inference -/
+
+/-- Type tag of a runtime value. -/
+inductive ValTag where
+  | uint64 | bool | str | unit | addr
+  deriving DecidableEq, Repr
+
+/-- Extract the type tag from a value. -/
+@[simp] def Value.tag : Value → ValTag
+  | .uint64 _ => .uint64
+  | .bool _   => .bool
+  | .str _    => .str
+  | .unit     => .unit
+  | .addr _   => .addr
+
+/-- What tag does a `BinOp` produce when fed operands of the given tags? -/
+@[simp] def BinOp.resultTag : BinOp → ValTag → ValTag → Option ValTag
+  | .add, .uint64, .uint64 | .sub, .uint64, .uint64
+  | .mul, .uint64, .uint64 | .div, .uint64, .uint64
+  | .mod, .uint64, .uint64 => some .uint64
+  | .eq, _, _ | .ne, _, _ => some .bool
+  | .lt, .uint64, .uint64 | .le, .uint64, .uint64
+  | .gt, .uint64, .uint64 | .ge, .uint64, .uint64 => some .bool
+  | .and, .bool, .bool | .or, .bool, .bool => some .bool
+  | .strAppend, .str, .str => some .str
+  | _, _, _ => none
+
+/-- What tag does a `UnaryOp` produce when fed an operand of the given tag? -/
+@[simp] def UnaryOp.resultTag : UnaryOp → ValTag → Option ValTag
+  | .not, .bool   => some .bool
+  | .neg, .uint64 => some .uint64
+  | _, _          => none
+
+/-- Conservative structural type inference.  Returns `some tag` only when we
+can statically determine that every successful evaluation produces a value
+with that tag.  Returns `none` for variables, calls, array/string indexing,
+etc., where the result depends on runtime state. -/
+def Expr.inferTag : Expr → Option ValTag
+  | .lit v        => some v.tag
+  | .var _        => none
+  | .binop op l r => do
+    let tl ← l.inferTag
+    let tr ← r.inferTag
+    op.resultTag tl tr
+  | .unop op e    => do
+    let t ← e.inferTag
+    op.resultTag t
+  | .call ..      => none
+  | .arrGet ..    => none
+  | .arrLen _     => some .uint64
+  | .strLen _     => some .uint64
+  | .strGet ..    => some .str
+
+/-! ### Soundness of tag inference -/
+
+private theorem BinOp.resultTag_sound (op : BinOp) (v₁ v₂ r : Value) (tag : ValTag)
+    (htag : op.resultTag v₁.tag v₂.tag = some tag) (heval : op.eval v₁ v₂ = some r) :
+    r.tag = tag := by
+  cases op <;> cases v₁ <;> cases v₂ <;>
+    simp [BinOp.eval, BinOp.resultTag, Value.tag] at htag heval ⊢ <;>
+    (try subst_vars; try rfl) <;>
+    (try (obtain ⟨_, h⟩ := heval; subst h; rfl))
+
+private theorem UnaryOp.resultTag_sound (op : UnaryOp) (v r : Value) (tag : ValTag)
+    (htag : op.resultTag v.tag = some tag) (heval : op.eval v = some r) :
+    r.tag = tag := by
+  cases op <;> cases v <;> simp [UnaryOp.eval, UnaryOp.resultTag, Value.tag] at htag heval ⊢ <;>
+    subst_vars <;> rfl
+
+theorem Expr.inferTag_sound : ∀ (e : Expr) (σ : PState) (tag : ValTag) (v : Value),
+    e.inferTag = some tag → e.eval σ = some v → v.tag = tag
+  | .lit _, _, _, v, htag, heval => by
+    simp [inferTag, Expr.eval] at htag heval; rw [← heval]; exact htag
+  | .var _, _, _, _, htag, _ => by simp [inferTag] at htag
+  | .binop op l r, σ, tag, v, htag, heval => by
+    unfold inferTag at htag
+    revert htag
+    cases htl : l.inferTag with
+    | none => simp
+    | some tl =>
+      cases htr : r.inferTag with
+      | none => simp
+      | some tr =>
+        simp; intro hrt
+        simp only [Expr.eval] at heval
+        revert heval
+        cases hl : l.eval σ with
+        | none => simp
+        | some vl =>
+          cases hr : r.eval σ with
+          | none => simp
+          | some vr =>
+            simp; intro hev
+            exact BinOp.resultTag_sound op vl vr v tag
+              (by rw [inferTag_sound l σ tl vl htl hl,
+                      inferTag_sound r σ tr vr htr hr]; exact hrt) hev
+  | .unop op e, σ, tag, v, htag, heval => by
+    unfold inferTag at htag
+    revert htag
+    cases hte : e.inferTag with
+    | none => simp
+    | some te =>
+      simp; intro hrt
+      simp only [Expr.eval] at heval
+      revert heval
+      cases he : e.eval σ with
+      | none => simp
+      | some ve =>
+        simp; intro hev
+        exact UnaryOp.resultTag_sound op ve v tag
+          (by rw [inferTag_sound e σ te ve hte he]; exact hrt) hev
+  | .call .., _, _, _, htag, _ => by simp [inferTag] at htag
+  | .arrGet .., _, _, _, htag, _ => by simp [inferTag] at htag
+  | .arrLen arr, σ, _, v, htag, heval => by
+    simp [inferTag] at htag; subst htag
+    unfold Expr.eval at heval
+    -- Split on arr.eval σ
+    cases h1 : arr.eval σ with
+    | none => simp [h1] at heval
+    | some va =>
+      simp [h1] at heval
+      cases va with
+      | addr a =>
+        simp at heval
+        cases h2 : σ.heap.arraySize a with
+        | none => simp [h2] at heval
+        | some sz => simp [h2] at heval; subst heval; rfl
+      | uint64 _ | bool _ | unit | str _ => simp at heval
+  | .strLen s, σ, _, v, htag, heval => by
+    simp [inferTag] at htag; subst htag
+    unfold Expr.eval at heval
+    cases h1 : s.eval σ with
+    | none => simp [h1] at heval
+    | some vs =>
+      simp [h1] at heval
+      cases vs with
+      | str sv => simp at heval; subst heval; rfl
+      | uint64 _ | bool _ | unit | addr _ => simp at heval
+  | .strGet s idx, σ, _, v, htag, heval => by
+    simp [inferTag] at htag; subst htag
+    unfold Expr.eval at heval
+    cases h1 : s.eval σ with
+    | none => simp [h1] at heval
+    | some vs =>
+      simp [h1] at heval
+      cases vs with
+      | str sv =>
+        simp at heval
+        cases h2 : idx.eval σ with
+        | none => simp [h2] at heval
+        | some vi =>
+          simp [h2] at heval
+          cases vi with
+          | uint64 i =>
+            simp at heval
+            obtain ⟨_, heq⟩ := heval; subst heq; rfl
+          | bool _ | unit | str _ | addr _ => simp at heval
+      | uint64 _ | bool _ | unit | addr _ => simp at heval
+
+/-! ### Corollaries for specific tags -/
+
+private theorem eval_uint64_of_inferTag (e : Expr) (σ : PState) (v : Value)
+    (htag : e.inferTag = some .uint64) (heval : e.eval σ = some v) :
+    ∃ n : UInt64, v = .uint64 n := by
+  have := Expr.inferTag_sound e σ .uint64 v htag heval
+  cases v <;> simp_all [Value.tag]
+
+private theorem eval_bool_of_inferTag (e : Expr) (σ : PState) (v : Value)
+    (htag : e.inferTag = some .bool) (heval : e.eval σ = some v) :
+    ∃ b : Bool, v = .bool b := by
+  have := Expr.inferTag_sound e σ .bool v htag heval
+  cases v <;> simp_all [Value.tag]
+
+private theorem eval_str_of_inferTag (e : Expr) (σ : PState) (v : Value)
+    (htag : e.inferTag = some .str) (heval : e.eval σ = some v) :
+    ∃ s : String, v = .str s := by
+  have := Expr.inferTag_sound e σ .str v htag heval
+  cases v <;> simp_all [Value.tag]
+
+/-! ## BinOp and UnaryOp simplification -/
+
+/-- Simplify a binary operation.
+
+**Constant folding**: When both operands are literals, evaluate at compile time.
+
+**Identity simplifications**: When one operand is an identity element (e.g. `0`
+for `+`, `1` for `*`, `true` for `&&`, `false` for `||`, `""` for `++`),
+and `Expr.inferTag` confirms the other operand has the correct type tag,
+simplify to the other operand.
+
+Note: absorb rules (`e * 0 → 0`, `false && e → false`, `true || e → true`)
+are intentionally omitted because they are unsound when `e.eval σ = none`. -/
 def BinOp.simplify : BinOp → Expr → Expr → Expr
+  -- Pure constant folding (both literals)
   | .add, .lit (.uint64 a), .lit (.uint64 b) => .lit (.uint64 (a + b))
   | .sub, .lit (.uint64 a), .lit (.uint64 b) => .lit (.uint64 (a - b))
   | .mul, .lit (.uint64 a), .lit (.uint64 b) => .lit (.uint64 (a * b))
@@ -23,6 +231,35 @@ def BinOp.simplify : BinOp → Expr → Expr → Expr
   | .and, .lit (.bool a),   .lit (.bool b)   => .lit (.bool (a && b))
   | .or,  .lit (.bool a),   .lit (.bool b)   => .lit (.bool (a || b))
   | .strAppend, .lit (.str a), .lit (.str b) => .lit (.str (a ++ b))
+  -- Additive identity: e + 0 = e, 0 + e = e
+  | .add, e, .lit (.uint64 0) =>
+    if e.inferTag == some .uint64 then e else .binop .add e (.lit (.uint64 0))
+  | .add, .lit (.uint64 0), e =>
+    if e.inferTag == some .uint64 then e else .binop .add (.lit (.uint64 0)) e
+  -- Subtractive identity: e - 0 = e
+  | .sub, e, .lit (.uint64 0) =>
+    if e.inferTag == some .uint64 then e else .binop .sub e (.lit (.uint64 0))
+  -- Multiplicative identity: e * 1 = e, 1 * e = e
+  | .mul, e, .lit (.uint64 1) =>
+    if e.inferTag == some .uint64 then e else .binop .mul e (.lit (.uint64 1))
+  | .mul, .lit (.uint64 1), e =>
+    if e.inferTag == some .uint64 then e else .binop .mul (.lit (.uint64 1)) e
+  -- Boolean AND identity: true && e = e, e && true = e
+  | .and, .lit (.bool true), e =>
+    if e.inferTag == some .bool then e else .binop .and (.lit (.bool true)) e
+  | .and, e, .lit (.bool true) =>
+    if e.inferTag == some .bool then e else .binop .and e (.lit (.bool true))
+  -- Boolean OR identity: false || e = e, e || false = e
+  | .or, .lit (.bool false), e =>
+    if e.inferTag == some .bool then e else .binop .or (.lit (.bool false)) e
+  | .or, e, .lit (.bool false) =>
+    if e.inferTag == some .bool then e else .binop .or e (.lit (.bool false))
+  -- String identity: e ++ "" = e, "" ++ e = e
+  | .strAppend, e, .lit (.str "") =>
+    if e.inferTag == some .str then e else .binop .strAppend e (.lit (.str ""))
+  | .strAppend, .lit (.str ""), e =>
+    if e.inferTag == some .str then e else .binop .strAppend (.lit (.str "")) e
+  -- Fallthrough
   | op, a, b => .binop op a b
 
 def UnaryOp.simplify : UnaryOp → Expr → Expr
@@ -74,11 +311,98 @@ def Stmt.constFoldList : List Stmt → List Stmt
   | s :: ss => s.constFold :: Stmt.constFoldList ss
 end
 
+/-! ## Correctness proofs -/
+
+-- Identity lemmas for specific operations
+private theorem add_zero_right (e : Expr) (σ : PState) (htag : e.inferTag = some .uint64) :
+    e.eval σ = (e.eval σ).bind (fun vl => BinOp.eval .add vl (.uint64 0)) := by
+  cases hev : e.eval σ with | none => simp | some v =>
+  obtain ⟨n, rfl⟩ := eval_uint64_of_inferTag e σ v htag hev; simp [BinOp.eval]
+
+private theorem add_zero_left (e : Expr) (σ : PState) (htag : e.inferTag = some .uint64) :
+    e.eval σ = (e.eval σ).bind (fun vr => BinOp.eval .add (.uint64 0) vr) := by
+  cases hev : e.eval σ with | none => simp | some v =>
+  obtain ⟨n, rfl⟩ := eval_uint64_of_inferTag e σ v htag hev; simp [BinOp.eval]
+
+private theorem sub_zero_right (e : Expr) (σ : PState) (htag : e.inferTag = some .uint64) :
+    e.eval σ = (e.eval σ).bind (fun vl => BinOp.eval .sub vl (.uint64 0)) := by
+  cases hev : e.eval σ with | none => simp | some v =>
+  obtain ⟨n, rfl⟩ := eval_uint64_of_inferTag e σ v htag hev; simp [BinOp.eval]
+
+private theorem mul_one_right (e : Expr) (σ : PState) (htag : e.inferTag = some .uint64) :
+    e.eval σ = (e.eval σ).bind (fun vl => BinOp.eval .mul vl (.uint64 1)) := by
+  cases hev : e.eval σ with | none => simp | some v =>
+  obtain ⟨n, rfl⟩ := eval_uint64_of_inferTag e σ v htag hev; simp [BinOp.eval]
+
+private theorem mul_one_left (e : Expr) (σ : PState) (htag : e.inferTag = some .uint64) :
+    e.eval σ = (e.eval σ).bind (fun vr => BinOp.eval .mul (.uint64 1) vr) := by
+  cases hev : e.eval σ with | none => simp | some v =>
+  obtain ⟨n, rfl⟩ := eval_uint64_of_inferTag e σ v htag hev; simp [BinOp.eval]
+
+private theorem and_true_left (e : Expr) (σ : PState) (htag : e.inferTag = some .bool) :
+    e.eval σ = (e.eval σ).bind (fun vr => BinOp.eval .and (.bool true) vr) := by
+  cases hev : e.eval σ with | none => simp | some v =>
+  obtain ⟨b, rfl⟩ := eval_bool_of_inferTag e σ v htag hev; simp [BinOp.eval]
+
+private theorem and_true_right (e : Expr) (σ : PState) (htag : e.inferTag = some .bool) :
+    e.eval σ = (e.eval σ).bind (fun vl => BinOp.eval .and vl (.bool true)) := by
+  cases hev : e.eval σ with | none => simp | some v =>
+  obtain ⟨b, rfl⟩ := eval_bool_of_inferTag e σ v htag hev; simp [BinOp.eval]
+
+private theorem or_false_left (e : Expr) (σ : PState) (htag : e.inferTag = some .bool) :
+    e.eval σ = (e.eval σ).bind (fun vr => BinOp.eval .or (.bool false) vr) := by
+  cases hev : e.eval σ with | none => simp | some v =>
+  obtain ⟨b, rfl⟩ := eval_bool_of_inferTag e σ v htag hev; simp [BinOp.eval]
+
+private theorem or_false_right (e : Expr) (σ : PState) (htag : e.inferTag = some .bool) :
+    e.eval σ = (e.eval σ).bind (fun vl => BinOp.eval .or vl (.bool false)) := by
+  cases hev : e.eval σ with | none => simp | some v =>
+  obtain ⟨b, rfl⟩ := eval_bool_of_inferTag e σ v htag hev; simp [BinOp.eval]
+
+private theorem strAppend_empty_right (e : Expr) (σ : PState) (htag : e.inferTag = some .str) :
+    e.eval σ = (e.eval σ).bind (fun vl => BinOp.eval .strAppend vl (.str "")) := by
+  cases hev : e.eval σ with | none => simp | some v =>
+  obtain ⟨s, rfl⟩ := eval_str_of_inferTag e σ v htag hev; simp [BinOp.eval]
+
+private theorem strAppend_empty_left (e : Expr) (σ : PState) (htag : e.inferTag = some .str) :
+    e.eval σ = (e.eval σ).bind (fun vr => BinOp.eval .strAppend (.str "") vr) := by
+  cases hev : e.eval σ with | none => simp | some v =>
+  obtain ⟨s, rfl⟩ := eval_str_of_inferTag e σ v htag hev; simp [BinOp.eval]
+
 -- Helper: BinOp.simplify preserves evaluation semantics
 @[simp] theorem BinOp.simplify_correct (op : BinOp) (e₁ e₂ : Expr) (σ : PState) :
     (BinOp.simplify op e₁ e₂).eval σ = (Expr.binop op e₁ e₂).eval σ := by
-  simp [Expr.eval]; unfold BinOp.simplify
-  split <;> simp_all [Expr.eval, BinOp.eval]
+  simp only [Expr.eval]
+  unfold BinOp.simplify
+  split
+  -- Each branch: either a constant folding case (closed by simp), a fallthrough
+  -- (closed by rfl/simp), or an identity case with if-then-else.
+  <;> first | (simp_all [Expr.eval, BinOp.eval]; done) | skip
+  -- Remaining: identity cases with `if inferTag ... then ... else ...`
+  all_goals (
+    split
+    · -- Guard true: use identity lemma.
+      next htag =>
+        simp only [beq_iff_eq] at htag
+        -- Normalize do-notation (Bind.bind) to Option.bind,
+        -- then reduce `(some x).bind f` to `f x`.
+        -- Do NOT unfold BinOp.eval so the goal matches identity lemma form.
+        simp only [Expr.eval, bind, Option.bind_some]
+        first
+        | exact add_zero_right _ σ htag
+        | exact add_zero_left  _ σ htag
+        | exact sub_zero_right _ σ htag
+        | exact mul_one_right  _ σ htag
+        | exact mul_one_left   _ σ htag
+        | exact and_true_left  _ σ htag
+        | exact and_true_right _ σ htag
+        | exact or_false_left  _ σ htag
+        | exact or_false_right _ σ htag
+        | exact strAppend_empty_right _ σ htag
+        | exact strAppend_empty_left  _ σ htag
+    · -- Guard false: keep the binop — result is the same expression
+      simp only [Expr.eval]
+  )
 
 -- Helper: UnaryOp.simplify preserves evaluation semantics
 @[simp] theorem UnaryOp.simplify_correct (op : UnaryOp) (e : Expr) (σ : PState) :
