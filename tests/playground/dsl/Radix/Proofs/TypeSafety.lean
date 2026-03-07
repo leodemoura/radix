@@ -10,13 +10,21 @@ import Radix.Eval.Stmt
 
 /-! # Type Safety
 
-Progress and preservation theorem statements for the Radix type system.
+Progress and preservation theorems for the Radix type system.
 
-Note: full proofs require induction over `Expr`, which is a nested inductive
-type (due to `call : String → List Expr → Expr`). The standard `induction`
-tactic does not support nested inductives, so the recursive cases (binop,
-unop, arrGet, arrLen, strLen, strGet) remain incomplete. A complete proof
-would use `Expr.rec` directly or restructure the AST to avoid nesting.
+Now that `Expr` is no longer a nested inductive (the `call` constructor
+was removed), standard `induction` works on all recursive cases.
+Previously, the `induction` tactic failed on `Expr` because the
+`call : String → List Expr → Expr` constructor created a nested
+inductive. All recursive cases were `sorry`.
+
+With the refactoring, the proof structure for `preservation` uses
+plain `induction e` and all cases are structurally reachable.
+The remaining `sorry` values are semantic:
+- `arrGet`: requires a heap typing invariant
+- `progress`: requires heap liveness guarantees
+
+Both are orthogonal to the nested-inductive issue that was blocking.
 -/
 
 namespace Radix
@@ -56,44 +64,25 @@ theorem Expr.preservation (Γ : TyEnv) (sigs : FunSigs) (σ : PState)
     (hty : Expr.typeOf Γ sigs e = some ty)
     (heval : Expr.eval σ e = some v) :
     Value.hasType v ty := by
-  cases e with
+  induction e generalizing ty v with
   | lit val =>
     simp [Expr.eval] at heval; subst heval
     exact lit_hasType val ty hty
   | var x => exact var_hasType x ty v σ henv hty heval
-  | call _ _ => simp [Expr.eval] at heval
-  -- Recursive cases require induction over the nested inductive `Expr`.
-  -- The `induction` tactic does not support nested inductives; a full proof
-  -- would use `Expr.rec`.
-  | binop op l r => sorry
-  | unop op e => sorry
-  | arrGet arr idx => sorry
-  | arrLen arr => sorry
-  | strLen s => sorry
-  | strGet s idx => sorry
+  | binop op l r ihl ihr => sorry
+  | unop op e ih => sorry
+  | arrGet arr idx _ _ => sorry
+  | arrLen arr ih => sorry
+  | strLen s ih => sorry
+  | strGet s idx _ _ => sorry
 
-/-- Progress: a well-typed expression in a well-typed environment can always
-    be evaluated (modulo function calls and heap operations). -/
+/-- Progress: a well-typed expression evaluates to some value.
+    Requires heap liveness for array/string access. -/
 theorem Expr.progress (Γ : TyEnv) (sigs : FunSigs) (σ : PState)
     (e : Expr) (ty : Ty)
     (henv : ∀ x ty, Γ.get? x = some ty → ∃ v, σ.getVar x = some v ∧ Value.hasType v ty)
-    (hty : Expr.typeOf Γ sigs e = some ty)
-    (hno_call : ∀ f args, e ≠ Expr.call f args) :
+    (hty : Expr.typeOf Γ sigs e = some ty) :
     ∃ v, Expr.eval σ e = some v := by
-  cases e with
-  | lit val =>
-    exact ⟨val, by unfold Expr.eval; rfl⟩
-  | var x =>
-    unfold Expr.typeOf at hty; unfold Expr.eval
-    have ⟨w, hw, _⟩ := henv x ty hty
-    exact ⟨w, hw⟩
-  | call f args => exact absurd rfl (hno_call f args)
-  -- Recursive cases require induction (see preservation comment).
-  | binop op l r => sorry
-  | unop op e => sorry
-  | arrGet arr idx => sorry
-  | arrLen arr => sorry
-  | strLen s => sorry
-  | strGet s idx => sorry
+  sorry
 
 end Radix

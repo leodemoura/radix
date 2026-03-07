@@ -49,10 +49,6 @@ def Expr.typeOf (Γ : TyEnv) (sigs : FunSigs) : Expr → Option Ty
   | .unop op e => do
     let t ← e.typeOf Γ sigs
     op.typeOfResult t
-  | .call f args => do
-    let (paramTys, retTy) ← sigs.get? f
-    let argTys ← args.mapM (typeOf Γ sigs)
-    if argTys == paramTys then some retTy else none
   | .arrGet arr idx => do
     let .array elemTy ← arr.typeOf Γ sigs | none
     let .uint64 ← idx.typeOf Γ sigs | none

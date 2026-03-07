@@ -64,7 +64,7 @@ inductive ValTag where
 
 /-- Conservative structural type inference.  Returns `some tag` only when we
 can statically determine that every successful evaluation produces a value
-with that tag.  Returns `none` for variables, calls, array/string indexing,
+with that tag.  Returns `none` for variables, array/string indexing,
 etc., where the result depends on runtime state. -/
 def Expr.inferTag : Expr → Option ValTag
   | .lit v        => some v.tag
@@ -76,7 +76,6 @@ def Expr.inferTag : Expr → Option ValTag
   | .unop op e    => do
     let t ← e.inferTag
     op.resultTag t
-  | .call ..      => none
   | .arrGet ..    => none
   | .arrLen _     => some .uint64
   | .strLen _     => some .uint64
@@ -140,7 +139,6 @@ theorem Expr.inferTag_sound : ∀ (e : Expr) (σ : PState) (tag : ValTag) (v : V
         simp; intro hev
         exact UnaryOp.resultTag_sound op ve v tag
           (by rw [inferTag_sound e σ te ve hte he]; exact hrt) hev
-  | .call .., _, _, _, htag, _ => by simp [inferTag] at htag
   | .arrGet .., _, _, _, htag, _ => by simp [inferTag] at htag
   | .arrLen arr, σ, _, v, htag, heval => by
     simp [inferTag] at htag; subst htag
@@ -266,22 +264,18 @@ def UnaryOp.simplify : UnaryOp → Expr → Expr
   | .not, .lit (.bool b) => .lit (.bool !b)
   | op, e => .unop op e
 
-mutual
 def Expr.constFold : Expr → Expr
   | .lit v => .lit v
   | .var x => .var x
   | .binop op l r => BinOp.simplify op l.constFold r.constFold
   | .unop op e => UnaryOp.simplify op e.constFold
-  | .call f args => .call f (Expr.constFoldList args)
   | .arrGet arr idx => .arrGet arr.constFold idx.constFold
   | .arrLen arr => .arrLen arr.constFold
   | .strLen s => .strLen s.constFold
   | .strGet s idx => .strGet s.constFold idx.constFold
 
-def Expr.constFoldList : List Expr → List Expr
-  | [] => []
-  | e :: es => e.constFold :: Expr.constFoldList es
-end
+def Expr.constFoldList (es : List Expr) : List Expr :=
+  es.map Expr.constFold
 
 mutual
 def Stmt.constFold : Stmt → Stmt
@@ -413,21 +407,17 @@ private theorem strAppend_empty_left (e : Expr) (σ : PState) (htag : e.inferTag
 -- Correctness: constant folding preserves expression evaluation
 theorem Expr.eval_constFold (e : Expr) (σ : PState) :
     e.constFold.eval σ = e.eval σ := by
-  induction e using Expr.constFold.induct (motive_2 := fun _ => True)
-    generalizing σ with
-  | case1 v => simp [Expr.constFold, Expr.eval]
-  | case2 x => simp [Expr.constFold, Expr.eval]
-  | case3 op l r ihl ihr =>
+  induction e with
+  | lit v => simp [Expr.constFold, Expr.eval]
+  | var x => simp [Expr.constFold, Expr.eval]
+  | binop op l r ihl ihr =>
     simp only [Expr.constFold, BinOp.simplify_correct, Expr.eval, ihl, ihr]
-  | case4 op e ih =>
+  | unop op e ih =>
     simp only [Expr.constFold, UnaryOp.simplify_correct, Expr.eval, ih]
-  | case5 => simp only [Expr.constFold, Expr.eval]
-  | case6 arr idx iha ihi => simp only [Expr.constFold, Expr.eval, iha, ihi]
-  | case7 arr ih => simp only [Expr.constFold, Expr.eval, ih]
-  | case8 s ih => simp only [Expr.constFold, Expr.eval, ih]
-  | case9 s idx ihs ihi => simp only [Expr.constFold, Expr.eval, ihs, ihi]
-  | case10 => trivial
-  | case11 => trivial
+  | arrGet arr idx iha ihi => simp only [Expr.constFold, Expr.eval, iha, ihi]
+  | arrLen arr ih => simp only [Expr.constFold, Expr.eval, ih]
+  | strLen s ih => simp only [Expr.constFold, Expr.eval, ih]
+  | strGet s idx ihs ihi => simp only [Expr.constFold, Expr.eval, ihs, ihi]
 
 -- Helper: constFold distributes over foldl of seq
 private theorem constFold_foldl_seq (acc : Stmt) (stmts : List Stmt) :
@@ -451,7 +441,10 @@ private theorem constFoldList_mapM_eval (args : List Expr) (σ : PState) :
   induction args with
   | nil => simp [Expr.constFoldList]
   | cons e es ih =>
-    simp only [Expr.constFoldList, List.mapM_cons, Expr.eval_constFold, ih]
+    unfold Expr.constFoldList
+    simp only [List.map_cons, List.mapM_cons, Expr.eval_constFold]
+    unfold Expr.constFoldList at ih
+    rw [ih]
 
 -- Correctness: constant folding preserves big-step semantics
 theorem Stmt.constFold_correct (h : BigStep σ s r) : BigStep σ s.constFold r := by

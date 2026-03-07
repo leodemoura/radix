@@ -62,6 +62,6 @@ def Expr.eval (σ : PState) : Expr → Option Value
       some (.str (sv.get ⟨i.toNat⟩ |>.toString))
     else
       none
-  | .call .. => none  -- function calls handled at statement level
+
 
 end Radix

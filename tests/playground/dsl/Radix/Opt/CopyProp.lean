@@ -18,23 +18,19 @@ open Std
 
 abbrev CopyMap := HashMap String String
 
-mutual
 /-- Apply copy propagation to an expression using the given copy map. -/
 def Expr.copyProp (m : CopyMap) : Expr → Expr
   | .lit v => .lit v
   | .var x => .var (m.get? x |>.getD x)
   | .binop op l r => .binop op (l.copyProp m) (r.copyProp m)
   | .unop op e => .unop op (e.copyProp m)
-  | .call f args => .call f (Expr.copyPropList m args)
   | .arrGet arr idx => .arrGet (arr.copyProp m) (idx.copyProp m)
   | .arrLen arr => .arrLen (arr.copyProp m)
   | .strLen s => .strLen (s.copyProp m)
   | .strGet s idx => .strGet (s.copyProp m) (idx.copyProp m)
 
-def Expr.copyPropList (m : CopyMap) : List Expr → List Expr
-  | [] => []
-  | e :: es => e.copyProp m :: Expr.copyPropList m es
-end
+def Expr.copyPropList (m : CopyMap) (es : List Expr) : List Expr :=
+  es.map (Expr.copyProp m)
 
 mutual
 /-- Apply copy propagation to a statement. Returns the transformed statement
@@ -131,30 +127,27 @@ private theorem PState.getVar_setVar_ne {σ σ' : PState} {x y : String} {v : Va
 
 theorem Expr.copyProp_eval (m : CopyMap) (e : Expr) (σ : PState) (hm : m.agrees σ) :
     (e.copyProp m).eval σ = e.eval σ := by
-  induction e using Expr.copyProp.induct (motive_2 := fun es =>
-      (Expr.copyPropList m es).mapM (Expr.eval σ) = es.mapM (Expr.eval σ)) with
-  | case1 v => simp [Expr.copyProp, Expr.eval]
-  | case2 x =>
+  induction e with
+  | lit v => simp [Expr.copyProp, Expr.eval]
+  | var x =>
     simp only [Expr.copyProp, Expr.eval, Option.getD]
     split
     · next y hy => exact (hm x y hy).symm
     · rfl
-  | case3 op l r ihl ihr => simp only [Expr.copyProp, Expr.eval, ihl, ihr]
-  | case4 op e ih => simp only [Expr.copyProp, Expr.eval, ih]
-  | case5 => simp [Expr.copyProp, Expr.eval]
-  | case6 arr idx iha ihi => simp only [Expr.copyProp, Expr.eval, iha, ihi]
-  | case7 arr ih => simp only [Expr.copyProp, Expr.eval, ih]
-  | case8 s ih => simp only [Expr.copyProp, Expr.eval, ih]
-  | case9 s idx ihs ihi => simp only [Expr.copyProp, Expr.eval, ihs, ihi]
-  | case10 => simp [Expr.copyPropList]
-  | case11 e es ihe ihes => simp only [Expr.copyPropList, List.mapM_cons, ihe, ihes]
+  | binop op l r ihl ihr => simp only [Expr.copyProp, Expr.eval, ihl, ihr]
+  | unop op e ih => simp only [Expr.copyProp, Expr.eval, ih]
+  | arrGet arr idx iha ihi => simp only [Expr.copyProp, Expr.eval, iha, ihi]
+  | arrLen arr ih => simp only [Expr.copyProp, Expr.eval, ih]
+  | strLen s ih => simp only [Expr.copyProp, Expr.eval, ih]
+  | strGet s idx ihs ihi => simp only [Expr.copyProp, Expr.eval, ihs, ihi]
 
 private theorem Expr.copyPropList_mapM_eval (m : CopyMap) (args : List Expr) (σ : PState)
     (hm : m.agrees σ) :
     (Expr.copyPropList m args).mapM (Expr.eval σ) = args.mapM (Expr.eval σ) := by
+  unfold Expr.copyPropList
   induction args with
-  | nil => simp [Expr.copyPropList]
-  | cons e es ih => simp only [Expr.copyPropList, List.mapM_cons, Expr.copyProp_eval m e σ hm, ih]
+  | nil => simp
+  | cons e es ih => simp only [List.map_cons, List.mapM_cons, Expr.copyProp_eval m e σ hm, ih]
 
 /-! ## Helper: copy-propagated variable lookup -/
 
@@ -268,8 +261,6 @@ theorem Stmt.copyProp_correct' (m : CopyMap) (h : BigStep σ s r) (hm : m.agrees
     | .binop .. => simp only [Stmt.copyProp]; exact assign_nonvar_correct m x _ v σ0 σ' he hs hm
               |>.imp id (fun h => fun σ'' heq => by cases heq; exact h)
     | .unop .. => simp only [Stmt.copyProp]; exact assign_nonvar_correct m x _ v σ0 σ' he hs hm
-              |>.imp id (fun h => fun σ'' heq => by cases heq; exact h)
-    | .call .. => simp only [Stmt.copyProp]; exact assign_nonvar_correct m x _ v σ0 σ' he hs hm
               |>.imp id (fun h => fun σ'' heq => by cases heq; exact h)
     | .arrGet .. => simp only [Stmt.copyProp]; exact assign_nonvar_correct m x _ v σ0 σ' he hs hm
               |>.imp id (fun h => fun σ'' heq => by cases heq; exact h)

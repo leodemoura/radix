@@ -13,23 +13,19 @@ Remove unreachable branches and simplify trivial control flow.
 
 namespace Radix
 
-mutual
 /-- Collect variables that are read in an expression. -/
 def Expr.readVars : Expr → List String
   | .lit _ => []
   | .var x => [x]
   | .binop _ l r => l.readVars ++ r.readVars
   | .unop _ e => e.readVars
-  | .call _ args => Expr.readVarsList args
   | .arrGet a i => a.readVars ++ i.readVars
   | .arrLen a => a.readVars
   | .strLen s => s.readVars
   | .strGet s i => s.readVars ++ i.readVars
 
-def Expr.readVarsList : List Expr → List String
-  | [] => []
-  | e :: es => e.readVars ++ Expr.readVarsList es
-end
+def Expr.readVarsList (es : List Expr) : List String :=
+  es.flatMap Expr.readVars
 
 mutual
 /-- Collect variables that are read in a statement. -/

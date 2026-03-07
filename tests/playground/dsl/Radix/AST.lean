@@ -56,7 +56,6 @@ inductive Expr where
   | var : String → Expr
   | binop : BinOp → Expr → Expr → Expr
   | unop : UnaryOp → Expr → Expr
-  | call : String → List Expr → Expr
   | arrGet : Expr → Expr → Expr
   | arrLen : Expr → Expr
   | strLen : Expr → Expr
