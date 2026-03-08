@@ -35,6 +35,9 @@ import Radix.Proofs.Determinism
 import Radix.Proofs.TypeSafety
 import Radix.Proofs.MemorySafety
 
+-- Examples
+import Radix.Examples
+
 -- Tests
 import Radix.Tests.Basic
 import Radix.Tests.Functions
