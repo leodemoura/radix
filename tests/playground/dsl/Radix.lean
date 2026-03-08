@@ -35,6 +35,9 @@ import Radix.Proofs.Determinism
 import Radix.Proofs.TypeSafety
 import Radix.Proofs.MemorySafety
 
+-- Linear ownership typing
+import Radix.Linear
+
 -- Examples
 import Radix.Examples
 
@@ -44,6 +47,7 @@ import Radix.Tests.Functions
 import Radix.Tests.Arrays
 import Radix.Tests.Strings
 import Radix.Tests.Opt
+import Radix.Tests.Linear
 
 /-! # Radix: A Verified Embedded Imperative DSL
 
@@ -56,7 +60,7 @@ Radix is an imperative DSL embedded in Lean 4 with:
   constant propagation, function inlining -- each with a mechanized proof that it
   preserves big-step semantics
 - **Formal properties**: determinism, type preservation, memory safety (no use-after-free,
-  no double-free)
+  no double-free), linear ownership typing with soundness proof
 - **Concrete syntax**: `\`[RExpr| ...]` and `\`[RStmt| ...]` macros for natural notation
 
 The architecture follows a classic compiler pipeline: AST -> type check -> optimize -> interpret.
