@@ -84,4 +84,99 @@ def bubbleSortProgram : Program := {
 
 #guard (bubbleSortProgram.run 10000).isOk
 
+/-! ## Array edge cases -/
+
+-- Zero-length allocation
+def test_zero_alloc :=
+  let alloc := Stmt.alloc "arr" Ty.uint64 (Expr.lit (Value.uint64 0))
+  let len := Stmt.assign "n" (Expr.arrLen (Expr.var "arr"))
+  let free := Stmt.free (Expr.var "arr")
+  alloc ;; len ;; free
+
+#guard getResult test_zero_alloc "n" == some (Value.uint64 0)
+
+-- Array length query
+def test_array_len :=
+  let alloc := Stmt.alloc "arr" Ty.uint64 (Expr.lit (Value.uint64 7))
+  let len := Stmt.assign "n" (Expr.arrLen (Expr.var "arr"))
+  let free := Stmt.free (Expr.var "arr")
+  alloc ;; len ;; free
+
+#guard getResult test_array_len "n" == some (Value.uint64 7)
+
+-- Out-of-bounds read produces error
+def test_oob_read :=
+  let alloc := Stmt.alloc "arr" Ty.uint64 (Expr.lit (Value.uint64 3))
+  let read := Stmt.assign "val" (Expr.arrGet (Expr.var "arr") (Expr.lit (Value.uint64 5)))
+  alloc ;; read
+
+#guard (test_oob_read.run).isOk == false
+
+-- Out-of-bounds write produces error
+def test_oob_write :=
+  let alloc := Stmt.alloc "arr" Ty.uint64 (Expr.lit (Value.uint64 3))
+  let write := Stmt.arrSet (Expr.var "arr") (Expr.lit (Value.uint64 10)) (Expr.lit (Value.uint64 42))
+  alloc ;; write
+
+#guard (test_oob_write.run).isOk == false
+
+-- Read at valid boundary (last element)
+def test_boundary_read :=
+  let alloc := Stmt.alloc "arr" Ty.uint64 (Expr.lit (Value.uint64 3))
+  let set := Stmt.arrSet (Expr.var "arr") (Expr.lit (Value.uint64 2)) (Expr.lit (Value.uint64 77))
+  let read := Stmt.assign "val" (Expr.arrGet (Expr.var "arr") (Expr.lit (Value.uint64 2)))
+  let free := Stmt.free (Expr.var "arr")
+  alloc ;; set ;; read ;; free
+
+#guard getResult test_boundary_read "val" == some (Value.uint64 77)
+
+-- Free invalid address produces error
+def test_free_invalid :=
+  Stmt.free (Expr.lit (Value.addr 9999))
+
+#guard (test_free_invalid.run).isOk == false
+
+-- Double free produces error
+def test_double_free :=
+  let alloc := Stmt.alloc "arr" Ty.uint64 (Expr.lit (Value.uint64 2))
+  let free1 := Stmt.free (Expr.var "arr")
+  let free2 := Stmt.free (Expr.var "arr")
+  alloc ;; free1 ;; free2
+
+#guard (test_double_free.run).isOk == false
+
+-- Read after free produces error
+def test_read_after_free :=
+  let alloc := Stmt.alloc "arr" Ty.uint64 (Expr.lit (Value.uint64 2))
+  let set := Stmt.arrSet (Expr.var "arr") (Expr.lit (Value.uint64 0)) (Expr.lit (Value.uint64 42))
+  let free := Stmt.free (Expr.var "arr")
+  let read := Stmt.assign "val" (Expr.arrGet (Expr.var "arr") (Expr.lit (Value.uint64 0)))
+  alloc ;; set ;; free ;; read
+
+#guard (test_read_after_free.run).isOk == false
+
+-- Multiple arrays can coexist
+def test_multi_array :=
+  let alloc1 := Stmt.alloc "a" Ty.uint64 (Expr.lit (Value.uint64 2))
+  let alloc2 := Stmt.alloc "b" Ty.uint64 (Expr.lit (Value.uint64 3))
+  let set_a := Stmt.arrSet (Expr.var "a") (Expr.lit (Value.uint64 0)) (Expr.lit (Value.uint64 10))
+  let set_b := Stmt.arrSet (Expr.var "b") (Expr.lit (Value.uint64 0)) (Expr.lit (Value.uint64 20))
+  let read_a := Stmt.assign "va" (Expr.arrGet (Expr.var "a") (Expr.lit (Value.uint64 0)))
+  let read_b := Stmt.assign "vb" (Expr.arrGet (Expr.var "b") (Expr.lit (Value.uint64 0)))
+  let free_a := Stmt.free (Expr.var "a")
+  let free_b := Stmt.free (Expr.var "b")
+  alloc1 ;; alloc2 ;; set_a ;; set_b ;; read_a ;; read_b ;; free_a ;; free_b
+
+#guard getResult test_multi_array "va" == some (Value.uint64 10)
+#guard getResult test_multi_array "vb" == some (Value.uint64 20)
+
+-- Newly allocated array is zero-initialized
+def test_zero_init :=
+  let alloc := Stmt.alloc "arr" Ty.uint64 (Expr.lit (Value.uint64 3))
+  let read := Stmt.assign "val" (Expr.arrGet (Expr.var "arr") (Expr.lit (Value.uint64 1)))
+  let free := Stmt.free (Expr.var "arr")
+  alloc ;; read ;; free
+
+#guard getResult test_zero_init "val" == some (Value.uint64 0)
+
 end Radix.Tests
