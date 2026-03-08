@@ -34,6 +34,7 @@ import Radix.Opt.Inline
 import Radix.Proofs.Determinism
 import Radix.Proofs.TypeSafety
 import Radix.Proofs.MemorySafety
+import Radix.Proofs.InterpCorrectness
 
 -- Linear ownership typing
 import Radix.Linear
