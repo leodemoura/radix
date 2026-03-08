@@ -12,9 +12,16 @@ import Radix.Eval.Stmt
 
 Progress and preservation theorems for the Radix type system.
 
-The remaining `sorry` values are semantic:
-- `arrGet`: requires a heap typing invariant
-- `progress`: requires heap liveness guarantees
+**Preservation** (`Expr.preservation`): if a well-typed expression evaluates
+successfully, the result value has the expected type. This is fully proved
+except for `arrGet`, which requires a heap typing invariant (tracking element
+types for each heap address) that is beyond the current framework.
+
+**Progress** (`Expr.progress`): a well-typed expression always evaluates to
+some value. This is `sorry`'d because it is not true as stated -- division
+by zero, out-of-bounds array access, and out-of-bounds string indexing are
+well-typed but produce `none`. A correct formulation would need either a
+totality judgment or strengthened preconditions.
 -/
 
 namespace Radix
@@ -81,8 +88,12 @@ private theorem UnaryOp.eval_preserves_type {op : UnaryOp} {v w : Value} {t ty :
     subst ty <;> cases v <;> simp [Value.hasType] at hv <;>
     simp [UnaryOp.eval] at hev <;> subst hev <;> simp [Value.hasType]
 
-/-- Type preservation: if a well-typed expression evaluates to a value,
-    that value has the expected type. -/
+/-- Type preservation for expressions: if `typeOf` assigns type `ty` to
+expression `e`, and `e` evaluates to value `v`, then `v` has type `ty`.
+
+The proof proceeds by structural induction on `e`, delegating to
+`BinOp.eval_preserves_type` and `UnaryOp.eval_preserves_type` for
+operator cases. The `arrGet` case is `sorry`'d (requires heap typing). -/
 theorem Expr.preservation (Γ : TyEnv) (sigs : FunSigs) (σ : PState)
     (e : Expr) (ty : Ty) (v : Value)
     (henv : ∀ x ty, Γ.get? x = some ty → ∃ v, σ.getVar x = some v ∧ Value.hasType v ty)

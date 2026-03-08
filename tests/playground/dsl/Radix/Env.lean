@@ -9,7 +9,10 @@ import Std.Data.HashMap
 
 /-! # Radix Variable Environment
 
-HashMap-based environment mapping variable names to values.
+A thin wrapper around `HashMap String Value` for variable environments.
+Each `Frame` contains one `Env`. Variable scoping is handled by the
+frame stack in `PState`, not by nested environments -- there is no
+lexical scoping or closure capture.
 -/
 
 namespace Radix

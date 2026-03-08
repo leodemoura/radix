@@ -6,10 +6,23 @@ Authors: Leonardo de Moura
 
 import Radix.State
 
-/-! # Radix Expression Evaluation -/
+/-! # Radix Expression Evaluation
+
+Defines evaluation for binary operators, unary operators, and expressions.
+All operations return `Option Value` -- `none` means a runtime error
+(type mismatch, division by zero, out-of-bounds access, etc.).
+
+Expression evaluation is pure: it reads from the program state but never
+modifies it. This separation is what makes the optimization correctness
+proofs tractable -- expression-level rewrites only need to preserve
+`Expr.eval`, not the full `BigStep` relation.
+-/
 
 namespace Radix
 
+/-- Evaluate a binary operator. Returns `none` on type mismatch or division
+by zero. Marked `@[simp]` so the optimization correctness proofs can
+reduce concrete cases automatically. -/
 @[simp] def BinOp.eval : BinOp → Value → Value → Option Value
   | .add, .uint64 a, .uint64 b => some (.uint64 (a + b))
   | .sub, .uint64 a, .uint64 b => some (.uint64 (a - b))

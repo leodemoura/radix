@@ -9,6 +9,16 @@ import Radix.Eval.Expr
 /-! # Radix Big-Step Semantics
 
 Relational big-step semantics for statements, including function call/return.
+
+This is the reference semantics against which all optimizations are verified.
+Each optimization proves: if `BigStep sigma s r`, then `BigStep sigma (s.opt) r`.
+The `BigStep.det` theorem (`Radix.Proofs.Determinism`) shows that this relation
+is deterministic, so the original and optimized programs are observationally
+equivalent.
+
+The semantics uses `StmtResult` to distinguish normal completion from early
+return. The `seqReturn` rule short-circuits: if the first statement in a
+sequence returns, the second is never executed.
 -/
 
 namespace Radix
@@ -23,7 +33,11 @@ def StmtResult.state : StmtResult → PState
   | .normal σ => σ
   | .returned _ σ => σ
 
-/-- Big-step operational semantics for Radix statements. -/
+/-- Big-step operational semantics for Radix statements.
+
+Notation: `⟨sigma, s⟩ ⇓ r` means statement `s` in state `sigma` produces
+result `r`. The relation is deterministic (`BigStep.det`) and total for
+well-typed, terminating programs. -/
 inductive BigStep : PState → Stmt → StmtResult → Prop where
   | skip :
     BigStep σ .skip (.normal σ)

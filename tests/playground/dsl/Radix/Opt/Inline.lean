@@ -9,7 +9,21 @@ import Std.Data.HashMap
 
 /-! # Function Inlining
 
-Inline small functions at their call sites.
+Inline small, non-recursive functions at their call sites. A `callStmt`
+is replaced by a `scope` that pushes a fresh frame with the function's
+parameters bound to the argument expressions, executes the (recursively
+inlined) body, then pops the frame.
+
+Inlining criteria:
+- Body size at most `inlineThreshold` (currently 10)
+- No recursive calls (`containsCall` check)
+- Bounded inlining depth to ensure termination
+
+The correctness proof (`Stmt.inline_correct`) requires an auxiliary
+invariant `hfuns : sigma.funs = funs` to ensure the static function
+table used for inlining matches the runtime function table. The
+`BigStep.funs_preserved` theorem establishes that `funs` is never
+modified during execution.
 -/
 
 namespace Radix
@@ -175,7 +189,9 @@ private theorem PState.popFrame_funs {σ : PState} {fr : Frame} {σ' : PState}
   | nil => exact absurd h nofun
   | cons _ rest => simp at h; obtain ⟨_, rfl⟩ := h; rfl
 
--- funs field is never modified during execution
+/-- The function table is never modified during execution. This invariant
+is essential for inlining correctness: it ensures the static function
+table used to decide what to inline matches the runtime table. -/
 theorem BigStep.funs_preserved (h : BigStep σ s r) : r.state.funs = σ.funs := by
   induction h with
   | skip => rfl
@@ -202,9 +218,8 @@ theorem BigStep.funs_preserved (h : BigStep σ s r) : r.state.funs = σ.funs := 
     simp only [StmtResult.state]
     rw [PState.popFrame_funs hpop, ih_body]; rfl
 
--- Correctness: inlining preserves semantics.
--- Uses `scope` for frame isolation, with `hfuns` ensuring the inline
--- function table matches the runtime function table.
+/-- Inlining preserves big-step semantics at any inlining depth.
+The `hfuns` hypothesis ties the static function table to the runtime one. -/
 theorem Stmt.inline_correct {funs : HashMap String FunDecl}
     (h : BigStep σ s r) (hfuns : σ.funs = funs) :
     ∀ depth, BigStep σ (s.inline funs depth) r := by

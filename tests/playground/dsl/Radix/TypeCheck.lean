@@ -9,13 +9,23 @@ import Std.Data.HashMap
 
 /-! # Radix Type Checking
 
-Typing judgments for expressions and statements, plus a decidable checker.
+Type inference for Radix expressions. Given a type environment `TyEnv`
+(mapping variable names to types) and function signatures `FunSigs`,
+`Expr.typeOf` infers the type of an expression or returns `none` if
+the expression is ill-typed.
+
+This module defines the typing rules used by the type safety proofs in
+`Radix.Proofs.TypeSafety`. Statement-level type checking is not
+implemented -- the current focus is expression-level preservation.
 -/
 
 namespace Radix
 open Std
 
+/-- Type environment: maps variable names to their declared types. -/
 abbrev TyEnv := HashMap String Ty
+
+/-- Function signature table: maps function names to (parameter types, return type). -/
 abbrev FunSigs := HashMap String (List Ty × Ty)
 
 @[simp] def BinOp.typeOfResult : BinOp → Ty → Ty → Option Ty

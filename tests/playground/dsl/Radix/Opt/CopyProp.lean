@@ -9,8 +9,19 @@ import Std.Data.HashMap
 
 /-! # Copy Propagation
 
-Replace `x := y; ... x ...` with `... y ...` when safe.
-Uses a substitution map tracking which variables are copies of others.
+Replace `x := y; ... x ...` with `... y ...` when safe. Uses a `CopyMap`
+tracking which variables are known copies of others.
+
+The key invariant is `CopyMap.agrees`: for every mapping `x -> y` in the
+copy map, `sigma.getVar x = sigma.getVar y` in the current state. This
+invariant is maintained across assignments (by invalidating stale entries)
+and is reset to empty at control flow joins (if/else, while, function calls)
+to stay sound.
+
+The correctness proof (`Stmt.copyProp_correct`) is the most complex of the
+optimization proofs because it must track the copy map invariant through
+every statement form, including the special case of `x := y` (copy assignment)
+vs. `x := e` (general assignment).
 -/
 
 namespace Radix
@@ -91,6 +102,8 @@ def Stmt.copyPropagation (s : Stmt) : Stmt :=
 
 /-! ## Map Agreement Invariant -/
 
+/-- The copy map agrees with a state if every recorded copy `x -> y`
+holds at runtime: the variables `x` and `y` have the same value. -/
 def CopyMap.agrees (m : CopyMap) (σ : PState) : Prop :=
   ∀ x y, m.get? x = some y → σ.getVar x = σ.getVar y
 
@@ -373,6 +386,7 @@ theorem Stmt.copyProp_correct' (m : CopyMap) (h : BigStep σ s r) (hm : m.agrees
         hpop
     · intro σ' heq; cases heq; exact CopyMap.agrees_empty _
 
+/-- Copy propagation preserves big-step semantics. -/
 theorem Stmt.copyProp_correct (h : BigStep σ s r) :
     BigStep σ s.copyPropagation r := by
   unfold Stmt.copyPropagation

@@ -9,7 +9,14 @@ import Radix.Heap
 /-! # Memory Safety Properties
 
 Proofs that the heap model enforces basic memory safety invariants:
-no use-after-free, no double-free, and bounds-checked reads.
+- `no_use_after_free`: a freed address cannot be looked up
+- `no_double_free`: a freed address cannot be freed again
+- `read_within_bounds`: in-bounds reads on a live allocation always succeed
+
+These are properties of the `Heap` API, not of the full language -- they
+show that the heap abstraction itself is sound. Full program-level memory
+safety (e.g., "a well-typed program never performs use-after-free") would
+require a linear type system or ownership tracking, which is future work.
 -/
 
 namespace Radix

@@ -7,11 +7,22 @@ Authors: Leonardo de Moura
 import Radix.AST
 import Std.Data.HashMap
 
-/-! # Radix Heap Model -/
+/-! # Radix Heap Model
+
+A simple bump-allocator heap mapping addresses to `Array Value`. Each `alloc`
+returns a fresh address (monotonically increasing `nextAddr`). The heap does
+not reuse freed addresses, which simplifies the memory safety proofs
+(`no_use_after_free`, `no_double_free` in `Radix.Proofs.MemorySafety`).
+
+All heap operations (`read`, `write`, `free`) return `Option` to model failures
+(invalid address, out-of-bounds index) explicitly.
+-/
 
 namespace Radix
 open Std
 
+/-- The heap: a map from addresses to arrays of values, plus a bump counter
+for fresh address allocation. -/
 structure Heap where
   store : HashMap Nat (Array Value) := {}
   nextAddr : Nat := 0

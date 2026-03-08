@@ -11,13 +11,21 @@ import Radix.Eval.Stmt
 Proof that the big-step semantics is deterministic: if a statement evaluates
 to two results from the same state, those results must be equal.
 
-The proof uses `grind` (SMT-style congruence closure and E-matching) for
-cases that reduce to equational contradictions or functional injectivity,
-and explicit inductive hypothesis application for recursive cases.
+This is a foundational property -- it means the optimization correctness
+theorems (`constFold_correct`, `deadCodeElim_correct`, etc.) actually imply
+observational equivalence, not just that the optimized program is one
+possible behavior.
+
+The proof uses `grind` for cases that reduce to equational contradictions
+or functional injectivity (e.g., `some true = some false` is absurd),
+and explicit inductive hypothesis application for recursive cases
+(`seq`, `while`, `call`).
 -/
 
 namespace Radix
 
+/-- The big-step semantics is deterministic: same state + same statement
+implies same result. -/
 theorem BigStep.det (h₁ : BigStep σ s r₁) (h₂ : BigStep σ s r₂) : r₁ = r₂ := by
   induction h₁ generalizing r₂ with
   | skip => cases h₂; rfl

@@ -10,6 +10,17 @@ import Std.Data.HashMap
 /-! # Constant Propagation
 
 Track which variables hold known constant values and substitute them.
+Unlike constant folding (which only simplifies literal subexpressions),
+constant propagation tracks the flow of constants through assignments:
+`x := 5; y := x + 1` becomes `x := 5; y := 6` after propagation + folding.
+
+The `ConstMap` records which variables are known to hold specific values.
+Like copy propagation, the map is reset at control flow joins. After
+substitution, constant folding is applied to maximize simplification.
+
+The correctness proof follows the same pattern as copy propagation:
+maintain a `ConstMap.agrees` invariant and show it holds after each
+statement form.
 -/
 
 namespace Radix
@@ -101,6 +112,8 @@ def Stmt.constPropagation (s : Stmt) : Stmt :=
 
 /-! ## Map Agreement Invariant -/
 
+/-- The constant map agrees with a state if every recorded constant `x -> v`
+holds at runtime: variable `x` contains exactly value `v`. -/
 def ConstMap.agrees (m : ConstMap) (σ : PState) : Prop :=
   ∀ x v, m.get? x = some v → σ.getVar x = some v
 
@@ -397,7 +410,7 @@ theorem Stmt.constProp_correct' (m : ConstMap) (h : BigStep σ s r) (hm : m.agre
         hpop
     · intro σ' heq; cases heq; exact ConstMap.agrees_empty _
 
--- Correctness: constant propagation preserves semantics
+/-- Constant propagation preserves big-step semantics. -/
 theorem Stmt.constPropagation_correct (h : BigStep σ s r) :
     BigStep σ s.constPropagation r := by
   unfold Stmt.constPropagation

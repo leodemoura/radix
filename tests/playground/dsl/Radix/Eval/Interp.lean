@@ -8,13 +8,19 @@ import Radix.Eval.Expr
 
 /-! # Radix Fuel-Based Interpreter
 
-Executable interpreter using fuel to guarantee termination.
-Returns `Option Value` to properly propagate `ret` statements:
-`none` means normal completion, `some v` means a return was encountered.
+Executable interpreter using fuel to guarantee termination. This is the
+"runnable" counterpart to the relational `BigStep` semantics -- useful for
+testing and `#guard` assertions, but not the subject of the correctness proofs.
+
+The interpreter is marked `partial` and returns `Option Value` to propagate
+`ret` statements: `none` means normal completion, `some v` means a return
+was encountered. Errors (type mismatches, missing variables, etc.) are
+reported via `ExceptT String`.
 -/
 
 namespace Radix
 
+/-- The interpreter monad: mutable `PState` with string error reporting. -/
 abbrev InterpM := ExceptT String (StateM PState)
 
 def evalExpr (e : Expr) : InterpM Value := do

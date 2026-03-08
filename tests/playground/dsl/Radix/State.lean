@@ -7,16 +7,27 @@ Authors: Leonardo de Moura
 import Radix.Env
 import Radix.Heap
 
-/-! # Radix Program State -/
+/-! # Radix Program State
+
+The runtime state combines a call stack (list of `Frame`s), a heap, and a
+function table. The call stack grows on function calls (`pushFrame`) and
+shrinks on return (`popFrame`). Variable lookup and mutation always operate
+on the topmost frame -- there is no variable capture across frames.
+-/
 
 namespace Radix
 open Std
 
+/-- A single stack frame: a local variable environment and an optional return
+variable name (currently unused but reserved for future call-with-result). -/
 structure Frame where
   env : Env := Env.empty
   retVar : Option String := none
   deriving Inhabited
 
+/-- The complete program state. `frames` is a stack (head = current frame).
+`funs` is immutable after initialization -- the `BigStep.funs_preserved`
+theorem in `Radix.Opt.Inline` proves this invariant. -/
 structure PState where
   frames : List Frame := [{}]
   heap : Heap := {}
@@ -51,6 +62,8 @@ def popFrame (σ : PState) : Option (Frame × PState) :=
 def lookupFun (σ : PState) (name : String) : Option FunDecl :=
   σ.funs.get? name
 
+/-- Build the initial state from a program: empty frame, empty heap,
+function table populated from the program's declarations. -/
 def initFromProgram (p : Program) : PState :=
   let funs := p.funs.foldl (init := ({}:HashMap String FunDecl)) fun m fd => m.insert fd.name fd
   { frames := [{}], heap := {}, funs }

@@ -62,10 +62,16 @@ inductive ValTag where
   | .neg, .uint64 => some .uint64
   | _, _          => none
 
-/-- Conservative structural type inference.  Returns `some tag` only when we
-can statically determine that every successful evaluation produces a value
-with that tag.  Returns `none` for variables, array/string indexing,
-etc., where the result depends on runtime state. -/
+/-- Conservative structural type inference for constant folding.
+Returns `some tag` only when we can statically guarantee that every
+successful evaluation produces a value with that tag. Returns `none`
+for variables, array indexing, etc., where the result depends on
+runtime state. This is weaker than full type checking but does not
+require a type environment -- it works purely from the expression
+structure.
+
+Soundness: `Expr.inferTag_sound` proves that if `inferTag` returns
+`some tag` and evaluation succeeds, the result has that tag. -/
 def Expr.inferTag : Expr → Option ValTag
   | .lit v        => some v.tag
   | .var _        => none
@@ -264,6 +270,7 @@ def UnaryOp.simplify : UnaryOp → Expr → Expr
   | .not, .lit (.bool b) => .lit (.bool !b)
   | op, e => .unop op e
 
+/-- Recursively apply constant folding to all subexpressions. -/
 def Expr.constFold : Expr → Expr
   | .lit v => .lit v
   | .var x => .var x
@@ -405,7 +412,7 @@ private theorem strAppend_empty_left (e : Expr) (σ : PState) (htag : e.inferTag
   simp [Expr.eval]; unfold UnaryOp.simplify
   split <;> simp_all [Expr.eval, UnaryOp.eval]
 
--- Correctness: constant folding preserves expression evaluation
+/-- Constant folding preserves expression evaluation for all states. -/
 theorem Expr.eval_constFold (e : Expr) (σ : PState) :
     e.constFold.eval σ = e.eval σ := by
   induction e with
@@ -447,7 +454,9 @@ private theorem constFoldList_mapM_eval (args : List Expr) (σ : PState) :
     unfold Expr.constFoldList at ih
     rw [ih]
 
--- Correctness: constant folding preserves big-step semantics
+/-- Constant folding preserves big-step semantics: if `s` produces result `r`,
+then `s.constFold` also produces `r`. The proof proceeds by induction on the
+derivation, using `Expr.eval_constFold` to rewrite expression evaluations. -/
 theorem Stmt.constFold_correct (h : BigStep σ s r) : BigStep σ s.constFold r := by
   induction h with
   | skip => exact BigStep.skip

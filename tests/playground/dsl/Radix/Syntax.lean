@@ -9,6 +9,15 @@ import Radix.Eval.Interp
 /-! # Radix Concrete Syntax
 
 Custom syntax categories for writing Radix programs naturally.
+
+Two syntax quotations are provided:
+- `` `[RExpr| ...] `` for expressions: arithmetic, comparisons, booleans,
+  string append, string/numeric literals, and variable references.
+- `` `[RStmt| ...] `` for statements: assignment, `if/else`, `while`, function
+  calls, `return`, and array write.
+
+Limitations: `arrGet`, `arrLen`, `strLen`, `strGet`, `alloc`, `free`, and `decl`
+are not covered by the concrete syntax and must be constructed as raw AST.
 -/
 
 namespace Radix

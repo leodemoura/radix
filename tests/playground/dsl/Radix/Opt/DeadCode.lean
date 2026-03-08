@@ -8,7 +8,16 @@ import Radix.Eval.Stmt
 
 /-! # Dead Code Elimination
 
-Remove unreachable branches and simplify trivial control flow.
+Remove unreachable branches and simplify trivial control flow:
+- `if (true) t else f` -> `t`, `if (false) t else f` -> `f`
+- `while (false) b` -> `skip`
+- `skip ;; s` -> `s`, `s ;; skip` -> `s`
+- `if c then skip else skip` -> `skip`
+
+The correctness proof (`Stmt.deadCodeElim_correct`) shows this preserves
+big-step semantics. The proof is more involved than constant folding because
+DCE changes the shape of the statement tree (removing `seq` nodes), requiring
+auxiliary lemmas about `foldl` and `BigStep.foldl_seq_mono`.
 -/
 
 namespace Radix
@@ -137,7 +146,7 @@ private theorem dce_foldl_skip (stmts : List Stmt) (σ : PState) (r : StmtResult
   have := dce_foldl_gen Stmt.skip stmts σ r h
   simp [Stmt.deadCodeElim] at this; exact this
 
--- Correctness: DCE preserves semantics
+/-- Dead code elimination preserves big-step semantics. -/
 theorem Stmt.deadCodeElim_correct (h : BigStep σ s r) : BigStep σ s.deadCodeElim r := by
   induction h with
   | skip => exact BigStep.skip
