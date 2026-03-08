@@ -55,6 +55,10 @@ def OwnershipInv (σ : PState) (O : Owned) : Prop :=
   (∀ x y, x ∈ O → y ∈ O → x ≠ y →
     ∀ a b, σ.getVar x = some (.addr a) → σ.getVar y = some (.addr b) → a ≠ b)
 
+/-- All functions in the function table have linearly balanced bodies. -/
+def WellTypedFuns (funs : HashMap String FunDecl) : Prop :=
+  ∀ name fd, funs.get? name = some fd → LinearOk ∅ fd.body ∅
+
 /-! ## Auxiliary lemmas: PState -/
 
 private theorem setVar_unfold {σ σ' : PState} {x : String} {v : Value}
@@ -106,6 +110,17 @@ theorem PState.popFrame_frames {σ : PState} {fr : Frame} {σ' : PState}
   split at h
   · contradiction
   · rename_i heq; obtain ⟨_, rfl⟩ := h; simp [heq]
+
+theorem PState.setVar_funs {σ σ' : PState} {x : String} {v : Value}
+    (h : σ.setVar x v = some σ') : σ'.funs = σ.funs := by
+  obtain ⟨fr, rest, _, rfl⟩ := setVar_unfold h; rfl
+
+theorem PState.popFrame_funs {σ : PState} {fr : Frame} {σ' : PState}
+    (h : σ.popFrame = some (fr, σ')) : σ'.funs = σ.funs := by
+  unfold PState.popFrame at h
+  split at h
+  · contradiction
+  · obtain ⟨_, rfl⟩ := h; rfl
 
 private theorem setVar_getVar_ne_of_mk {σ : PState} {heap' : Heap} {x : String} {v : Value} {σ' : PState}
     (h : (PState.mk σ.frames heap' σ.funs).setVar x v = some σ')
@@ -273,6 +288,33 @@ theorem PState.getVar_scope {σ σ' : PState} {frame : Frame} {body : Stmt}
   have h2 := BigStep.frames_tail hbody
   simp only [h1, h2, PState.pushFrame, List.tail_cons]
 
+/-- The function table is never modified during execution. -/
+theorem BigStep.funs_preserved
+    {σ : PState} {s : Stmt} {r : StmtResult}
+    (h : BigStep σ s r) : r.state.funs = σ.funs := by
+  induction h with
+  | skip | whileFalse _ | ret _ | free _ _ | arrSet _ _ _ _ => rfl
+  | assign _ hs | decl _ hs => exact PState.setVar_funs hs
+  | alloc _ _ hs => exact PState.setVar_funs hs
+  | seqNormal _ _ ih₁ ih₂ =>
+    simp only [StmtResult.state] at ih₁; rw [ih₂, ih₁]
+  | seqReturn _ ih => exact ih
+  | ifTrue _ _ ih | ifFalse _ _ ih => exact ih
+  | whileTrue _ _ _ ihb ihw =>
+    simp only [StmtResult.state] at ihb; rw [ihw, ihb]
+  | whileReturn _ _ ih => exact ih
+  | block _ ih => exact ih
+  | callStmt _ _ _ _ _ hpop ih =>
+    simp only [StmtResult.state]; rw [PState.popFrame_funs hpop, ih]; rfl
+  | scope _ _ _ _ hpop ih =>
+    simp only [StmtResult.state]; rw [PState.popFrame_funs hpop, ih]; rfl
+
+private theorem WellTypedFuns.of_normal {σ σ' : PState} {s : Stmt}
+    (h : BigStep σ s (.normal σ')) (hwt : WellTypedFuns σ.funs) :
+    WellTypedFuns σ'.funs := by
+  have := BigStep.funs_preserved h; simp only [StmtResult.state] at this
+  rw [this]; exact hwt
+
 /-- Combined soundness + heap preservation, by induction on BigStep.
 Part A: OwnershipInv preserved for normal results.
 Part B: Heap wf preserved for all results.
@@ -281,7 +323,8 @@ private theorem soundness_core
     {σ : PState} {s : Stmt} {r : StmtResult}
     (hstep : BigStep σ s r)
     {O O' : Owned} (hlin : LinearOk O s O')
-    (hinv : OwnershipInv σ O) :
+    (hinv : OwnershipInv σ O)
+    (hwt : WellTypedFuns σ.funs) :
     (∀ σ', r = .normal σ' → OwnershipInv σ' O') ∧
     (∀ k, r.state.heap.store.contains k → k < r.state.heap.nextAddr) ∧
     (∀ (a : Addr),
@@ -352,22 +395,22 @@ private theorem soundness_core
   | seqNormal h1 h2 ih1 ih2 =>
     cases hlin with
     | seq hlin1 hlin2 =>
-      obtain ⟨hA1, hB1, hC1⟩ := ih1 hlin1 hinv
+      obtain ⟨hA1, hB1, hC1⟩ := ih1 hlin1 hinv hwt
       have hinv2 := hA1 _ rfl
-      obtain ⟨hA2, hB2, hC2⟩ := ih2 hlin2 hinv2
+      obtain ⟨hA2, hB2, hC2⟩ := ih2 hlin2 hinv2 (WellTypedFuns.of_normal h1 hwt)
       refine ⟨hA2, hB2, fun a hl hno => ?_⟩
       obtain ⟨hl2, hno2⟩ := hC1 a hl hno
       exact hC2 a hl2 (hno2 _ rfl)
   | seqReturn h1 ih1 =>
     cases hlin with
     | seq hlin1 _ =>
-      obtain ⟨_, hB1, hC1⟩ := ih1 hlin1 hinv
+      obtain ⟨_, hB1, hC1⟩ := ih1 hlin1 hinv hwt
       exact ⟨(fun _ h => nomatch h), hB1,
              fun a hl hno => ⟨(hC1 a hl hno).1, fun _ h => nomatch h⟩⟩
   | ifTrue _ _ iht =>
-    cases hlin with | ite hlin_t _ => exact iht hlin_t hinv
+    cases hlin with | ite hlin_t _ => exact iht hlin_t hinv hwt
   | ifFalse _ _ ihf =>
-    cases hlin with | ite _ hlin_f => exact ihf hlin_f hinv
+    cases hlin with | ite _ hlin_f => exact ihf hlin_f hinv hwt
   -- While cases
   | whileFalse _ =>
     cases hlin
@@ -376,14 +419,14 @@ private theorem soundness_core
   | whileTrue _ hbody hwhile ih_b ih_w =>
     cases hlin with
     | whileLoop hlin_b =>
-      obtain ⟨hA_b, hB_b, hC_b⟩ := ih_b hlin_b hinv
-      obtain ⟨hA_w, hB_w, hC_w⟩ := ih_w (.whileLoop hlin_b) (hA_b _ rfl)
+      obtain ⟨hA_b, hB_b, hC_b⟩ := ih_b hlin_b hinv hwt
+      obtain ⟨hA_w, hB_w, hC_w⟩ := ih_w (.whileLoop hlin_b) (hA_b _ rfl) (WellTypedFuns.of_normal hbody hwt)
       exact ⟨hA_w, hB_w, fun a hl hno =>
         hC_w a (hC_b a hl hno).1 ((hC_b a hl hno).2 _ rfl)⟩
   | whileReturn _ _ ih_b =>
     cases hlin with
     | whileLoop hlin_b =>
-      obtain ⟨_, hB_b, hC_b⟩ := ih_b hlin_b hinv
+      obtain ⟨_, hB_b, hC_b⟩ := ih_b hlin_b hinv hwt
       exact ⟨(fun _ h => nomatch h), hB_b,
              fun a hl hno => ⟨(hC_b a hl hno).1, fun _ h => nomatch h⟩⟩
   -- Alloc
@@ -491,20 +534,47 @@ private theorem soundness_core
         exact ⟨Heap.write_preserves hw hl, fun σ₁ h => by cases h; exact hno⟩
   -- Block
   | block _ ih =>
-    cases hlin with | block h => exact ih h hinv
-  -- CallStmt — requires well-typed function table assumption (not provable as stated)
-  | callStmt _ _ _ _ _ _ _ =>
+    cases hlin with | block h => exact ih h hinv hwt
+  -- CallStmt — uses WellTypedFuns to get the body's linear typing
+  | callStmt hlook _ _ _ hbody hpop ih =>
     cases hlin
-    -- The callStmt rule makes no hypothesis about the function body's linear typing.
-    -- Soundness requires all called functions to satisfy `LinearOk ∅ fd.body ∅`.
-    exact ⟨sorry, sorry, sorry⟩
+    have hlin_body := hwt _ _ hlook
+    obtain ⟨hA, hB, hC⟩ := ih hlin_body
+      ⟨hinv.1, fun _ h => absurd h HashSet.not_mem_empty,
+                fun _ _ h => absurd h HashSet.not_mem_empty⟩ hwt
+    have hhp := PState.popFrame_heap hpop
+    have hgv := PState.getVar_scope hbody hpop
+    obtain ⟨hwf, hlive, halias⟩ := hinv
+    simp only [StmtResult.state]
+    constructor
+    · -- Part A
+      intro σ₁ h; cases h
+      refine ⟨?_, ?_, ?_⟩
+      · intro k hk; rw [hhp] at hk ⊢; exact hB k hk
+      · intro y hy
+        obtain ⟨b, hget, hlook'⟩ := hlive y hy
+        refine ⟨b, ?_, ?_⟩
+        · rw [hgv y]; exact hget
+        · rw [hhp]; exact (hC b hlook' (fun _ h => absurd h HashSet.not_mem_empty)).1
+      · intro y z hy hz hyz a' b' hga hgb
+        rw [hgv y] at hga; rw [hgv z] at hgb
+        exact halias y z hy hz hyz a' b' hga hgb
+    constructor
+    · -- Part B
+      intro k hk; rw [hhp] at hk ⊢; exact hB k hk
+    · -- Part C
+      intro a hl hno
+      constructor
+      · rw [hhp]; exact (hC a hl (fun _ h => absurd h HashSet.not_mem_empty)).1
+      · intro σ₁ h; cases h; intro y hy b hgb
+        apply hno y hy b; rw [← hgv y]; exact hgb
   -- Scope — the key case requiring heap preservation
   | scope hargs hlen hframe hbody hpop ih =>
     cases hlin with
     | scope hlin_body =>
       obtain ⟨hA, hB, hC⟩ := ih hlin_body
         ⟨hinv.1, fun _ h => absurd h HashSet.not_mem_empty,
-                  fun _ _ h => absurd h HashSet.not_mem_empty⟩
+                  fun _ _ h => absurd h HashSet.not_mem_empty⟩ hwt
       have hhp := PState.popFrame_heap hpop
       have hgv := PState.getVar_scope hbody hpop
       obtain ⟨hwf, hlive, halias⟩ := hinv
@@ -537,9 +607,10 @@ theorem LinearOk.soundness
     (hlin : LinearOk O s O')
     {σ σ' : PState}
     (hstep : BigStep σ s (.normal σ'))
-    (hinv : OwnershipInv σ O) :
+    (hinv : OwnershipInv σ O)
+    (hwt : WellTypedFuns σ.funs) :
     OwnershipInv σ' O' :=
-  (soundness_core hstep hlin hinv).1 σ' rfl
+  (soundness_core hstep hlin hinv hwt).1 σ' rfl
 
 /-- After executing a linearly-typed statement, every owned variable
 points to a live heap address. -/
@@ -549,9 +620,10 @@ theorem LinearOk.live_access
     {σ σ' : PState}
     (hstep : BigStep σ s (.normal σ'))
     (hinv : OwnershipInv σ O)
+    (hwt : WellTypedFuns σ.funs)
     {x : String} (hx : x ∈ O') :
     ∃ a, σ'.getVar x = some (.addr a) ∧ σ'.heap.lookup a ≠ none :=
-  (LinearOk.soundness hlin hstep hinv).2.1 x hx
+  (LinearOk.soundness hlin hstep hinv hwt).2.1 x hx
 
 /-- Programs typed ∅ → ∅ are balanced: starting from a valid state with no
 ownership, execution preserves the heap well-formedness invariant. -/
@@ -560,11 +632,9 @@ theorem LinearOk.balanced
     (hlin : LinearOk ∅ s ∅)
     {σ σ' : PState}
     (hstep : BigStep σ s (.normal σ'))
-    (hwf : ∀ a, σ.heap.store.contains a → a < σ.heap.nextAddr) :
-    ∀ a, σ'.heap.store.contains a → a < σ'.heap.nextAddr := by
-  have hinv : OwnershipInv σ ∅ :=
-    ⟨hwf, fun _ h => absurd h (HashSet.not_mem_empty),
-          fun _ _ h => absurd h (HashSet.not_mem_empty)⟩
-  exact (LinearOk.soundness hlin hstep hinv).1
+    (hinv : OwnershipInv σ O)
+    (hwt : WellTypedFuns σ.funs) :
+    ∀ a, σ'.heap.store.contains a → a < σ'.heap.nextAddr :=
+  (LinearOk.soundness hlin hstep hinv hwt).1
 
 end Radix
