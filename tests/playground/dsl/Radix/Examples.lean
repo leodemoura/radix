@@ -120,21 +120,23 @@ def fizzbuzz := `[RStmt|
 
 /-! ## Array: Sum of Squares
 
-Allocate an array, fill with 1²..10², compute the sum.
-Array operations (`alloc`, `arrGet`, `arrSet`, `free`) use raw AST
-constructors; arithmetic uses `\`[RExpr| ...]` syntax. -/
+Allocate an array, fill with 1²..10², compute the sum. -/
 
-def sumOfSquares : Stmt :=
-  Stmt.alloc "arr" (.array .uint64) (.lit (.uint64 10)) ;;
-  `[RStmt| i := 0; ] ;;
-  Stmt.while `[RExpr| i < 10]
-    (Stmt.arrSet (.var "arr") (.var "i") `[RExpr| (i + 1) * (i + 1)] ;;
-     `[RStmt| i := i + 1; ]) ;;
-  `[RStmt| sum := 0; i := 0; ] ;;
-  Stmt.while `[RExpr| i < 10]
-    (Stmt.assign "sum" (.binop .add (.var "sum") (.arrGet (.var "arr") (.var "i"))) ;;
-     `[RStmt| i := i + 1; ]) ;;
-  Stmt.free (.var "arr")
+def sumOfSquares := `[RStmt|
+  let arr := new uint64[][10];
+  i := 0;
+  while (i < 10) {
+    arr[i] := (i + 1) * (i + 1);
+    i := i + 1;
+  }
+  sum := 0;
+  i := 0;
+  while (i < 10) {
+    sum := sum + arr[i];
+    i := i + 1;
+  }
+  free(arr);
+]
 
 #eval! run sumOfSquares "sum"
 -- 385
@@ -143,32 +145,35 @@ def sumOfSquares : Stmt :=
 
 Sort [5, 3, 8, 1, 9, 2, 7, 4, 6, 0] in-place on a heap-allocated array. -/
 
-def bubbleSort : Stmt :=
-  Stmt.alloc "arr" (.array .uint64) (.lit (.uint64 10)) ;;
-  Stmt.arrSet (.var "arr") (.lit (.uint64 0)) (.lit (.uint64 5)) ;;
-  Stmt.arrSet (.var "arr") (.lit (.uint64 1)) (.lit (.uint64 3)) ;;
-  Stmt.arrSet (.var "arr") (.lit (.uint64 2)) (.lit (.uint64 8)) ;;
-  Stmt.arrSet (.var "arr") (.lit (.uint64 3)) (.lit (.uint64 1)) ;;
-  Stmt.arrSet (.var "arr") (.lit (.uint64 4)) (.lit (.uint64 9)) ;;
-  Stmt.arrSet (.var "arr") (.lit (.uint64 5)) (.lit (.uint64 2)) ;;
-  Stmt.arrSet (.var "arr") (.lit (.uint64 6)) (.lit (.uint64 7)) ;;
-  Stmt.arrSet (.var "arr") (.lit (.uint64 7)) (.lit (.uint64 4)) ;;
-  Stmt.arrSet (.var "arr") (.lit (.uint64 8)) (.lit (.uint64 6)) ;;
-  Stmt.arrSet (.var "arr") (.lit (.uint64 9)) (.lit (.uint64 0)) ;;
-  `[RStmt| i := 0; ] ;;
-  Stmt.while `[RExpr| i < 9]
-    (`[RStmt| j := 0; ] ;;
-     Stmt.while (.binop .lt (.var "j") (.binop .sub (.lit (.uint64 9)) (.var "i")))
-       (Stmt.assign "a" (.arrGet (.var "arr") (.var "j")) ;;
-        Stmt.assign "b" (.arrGet (.var "arr") (.binop .add (.var "j") (.lit (.uint64 1)))) ;;
-        Stmt.ite (.binop .gt (.var "a") (.var "b"))
-          (Stmt.arrSet (.var "arr") (.var "j") (.var "b") ;;
-           Stmt.arrSet (.var "arr") (.binop .add (.var "j") (.lit (.uint64 1))) (.var "a"))
-          Stmt.skip ;;
-        `[RStmt| j := j + 1; ]) ;;
-     `[RStmt| i := i + 1; ]) ;;
-  Stmt.assign "first" (.arrGet (.var "arr") (.lit (.uint64 0))) ;;
-  Stmt.assign "last" (.arrGet (.var "arr") (.lit (.uint64 9)))
+def bubbleSort := `[RStmt|
+  let arr := new uint64[][10];
+  arr[0] := 5;
+  arr[1] := 3;
+  arr[2] := 8;
+  arr[3] := 1;
+  arr[4] := 9;
+  arr[5] := 2;
+  arr[6] := 7;
+  arr[7] := 4;
+  arr[8] := 6;
+  arr[9] := 0;
+  i := 0;
+  while (i < 9) {
+    j := 0;
+    while (j < 9 - i) {
+      let a : uint64 = arr[j];
+      let b : uint64 = arr[j + 1];
+      if (a > b) {
+        arr[j] := b;
+        arr[j + 1] := a;
+      }
+      j := j + 1;
+    }
+    i := i + 1;
+  }
+  first := arr[0];
+  last := arr[9];
+]
 
 #eval! run bubbleSort "first"  -- 0
 #eval! run bubbleSort "last"   -- 9
@@ -184,20 +189,23 @@ def zeroArray : Program := {
     { name := "zeroOut"
       params := [("a", .array .uint64), ("n", .uint64)]
       retTy := .unit
-      body :=
-        `[RStmt| i := 0; ] ;;
-        Stmt.while `[RExpr| i < n]
-          (Stmt.arrSet (.var "a") (.var "i") (.lit (.uint64 0)) ;;
-           `[RStmt| i := i + 1; ])
+      body := `[RStmt|
+        i := 0;
+        while (i < n) {
+          a[i] := 0;
+          i := i + 1;
+        }
+      ]
     }
   ]
-  main :=
-    Stmt.alloc "arr" (.array .uint64) (.lit (.uint64 3)) ;;
-    Stmt.arrSet (.var "arr") (.lit (.uint64 0)) (.lit (.uint64 10)) ;;
-    Stmt.arrSet (.var "arr") (.lit (.uint64 1)) (.lit (.uint64 20)) ;;
-    Stmt.arrSet (.var "arr") (.lit (.uint64 2)) (.lit (.uint64 30)) ;;
-    `[RStmt| zeroOut(arr, 3); ] ;;
-    Stmt.assign "val" (.arrGet (.var "arr") (.lit (.uint64 0)))
+  main := `[RStmt|
+    let arr := new uint64[][3];
+    arr[0] := 10;
+    arr[1] := 20;
+    arr[2] := 30;
+    zeroOut(arr, 3);
+    val := arr[0];
+  ]
 }
 
 #eval! runProg zeroArray "val"
