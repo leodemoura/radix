@@ -18,6 +18,8 @@ to the relational big-step semantics (`BigStep`).
   `n`, it succeeds with the same result with any `m ≥ n`.
 - `Stmt.interp_complete`: completeness — if `BigStep σ s r`, there exists enough
   fuel for `interp` to produce the same result.
+- `Stmt.interp_sound`: soundness — if `interp` succeeds, then `BigStep` holds
+  for the corresponding result.
 -/
 
 namespace Radix
@@ -77,6 +79,49 @@ theorem mkFrame_ok {params : List (String × Ty)} {vs : List Value} {frame : Fra
 
 @[simp] theorem andThen_error {e : String} {σ' : PState} {k : PState → InterpResult} :
     andThen (.error e, σ') k = (.error e, σ') := rfl
+
+@[simp] theorem evalExpr_ok' {e : Expr} {σ : PState} {v : Value}
+    (h : evalExpr e σ = .ok v) : e.eval σ = some v := by
+  simp [evalExpr] at h
+  split at h <;> simp_all
+
+private theorem evalArgs_aux' {args : List Expr} {σ : PState} {vs : List Value}
+    (h : args.mapM (fun e => evalExpr e σ) = .ok vs) :
+    args.mapM (Expr.eval σ) = some vs := by
+  induction args generalizing vs with
+  | nil =>
+    simp only [List.mapM_nil, pure, Except.pure, Except.ok.injEq] at h
+    subst h; rfl
+  | cons a as ih =>
+    simp only [List.mapM_cons, bind, Except.bind] at h
+    split at h
+    · simp at h
+    · rename_i v hv
+      split at h
+      · simp at h
+      · rename_i vs' hvs'
+        simp only [pure, Except.pure, Except.ok.injEq] at h
+        rw [List.mapM_cons]
+        simp [evalExpr_ok' hv, ih hvs', ← h]
+
+theorem evalArgs_ok' {args : List Expr} {σ : PState} {vs : List Value}
+    (h : evalArgs args σ = .ok vs) : args.mapM (Expr.eval σ) = some vs := by
+  simp [evalArgs] at h
+  exact evalArgs_aux' h
+
+theorem mkFrame_ok' {params : List (String × Ty)} {vs : List Value} {frame : Frame}
+    (h : mkFrame params vs = .ok frame) :
+    params.length = vs.length ∧
+    frame = { env := (params.zip vs).foldl (fun env (p, v) => env.set p.1 v) Env.empty } := by
+  unfold mkFrame at h
+  simp only [ne_eq, bind, Except.bind, pure, Except.pure] at h
+  split at h
+  · simp at h
+  · rename_i hlen
+    simp only [Except.ok.injEq] at h
+    constructor
+    · omega
+    · subst h; rfl
 
 /-! ## Fuel monotonicity -/
 
@@ -283,5 +328,170 @@ theorem Stmt.interp_complete
     unfold Stmt.interp; simp only [evalArgs_ok hargs, mkFrame_ok hlen hframe]
     rw [interp_fuel_mono (Nat.le_refl nb) hnb]
     simp_all [StmtResult.state]
+
+/-! ## Soundness -/
+
+/-- Convert an interpreter result to a `StmtResult`. -/
+@[simp] def toStmtResult (rv : Option Value) (σ' : PState) : StmtResult :=
+  match rv with | none => .normal σ' | some v => .returned v σ'
+
+@[simp] theorem toStmtResult_state (rv : Option Value) (σ : PState) :
+    (toStmtResult rv σ).state = σ := by
+  cases rv <;> rfl
+
+/-- If the interpreter succeeds, the big-step relation holds. -/
+theorem Stmt.interp_sound {fuel : Nat} {s : Stmt} {σ σ' : PState} {rv : Option Value}
+    (h : s.interp fuel σ = (.ok rv, σ')) :
+    BigStep σ s (toStmtResult rv σ') := by
+  induction fuel generalizing s σ σ' rv with
+  | zero => simp [Stmt.interp] at h
+  | succ n ih =>
+    unfold Stmt.interp at h
+    match s with
+    | .skip =>
+      simp at h; obtain ⟨rfl, rfl⟩ := h
+      exact .skip
+    | .assign x e =>
+      simp only [] at h
+      split at h
+      · simp at h
+      · rename_i v hv
+        split at h
+        · rename_i σ₂ hs
+          simp at h; obtain ⟨rfl, rfl⟩ := h
+          exact .assign (evalExpr_ok' hv) hs
+        · simp at h
+    | .decl x _ty e =>
+      simp only [] at h
+      split at h
+      · simp at h
+      · rename_i v hv
+        split at h
+        · rename_i σ₂ hs
+          simp at h; obtain ⟨rfl, rfl⟩ := h
+          exact .decl (evalExpr_ok' hv) hs
+        · simp at h
+    | .seq s₁ s₂ =>
+      simp only [andThen] at h
+      split at h
+      · rename_i σ₂ h₁
+        exact .seqNormal (ih h₁) (ih h)
+      · rename_i v σ₂ h₁
+        simp at h; obtain ⟨rfl, rfl⟩ := h
+        exact .seqReturn (ih h₁)
+      · simp at h
+    | .ite c t f =>
+      simp only [] at h
+      split at h
+      · simp at h
+      · rename_i hc
+        exact .ifTrue (evalExpr_ok' hc) (ih h)
+      · rename_i hc
+        exact .ifFalse (evalExpr_ok' hc) (ih h)
+      · simp at h
+    | .while c b =>
+      simp only [] at h
+      split at h
+      · simp at h
+      · rename_i hc
+        simp only [andThen] at h
+        split at h
+        · rename_i σ₂ hb
+          exact .whileTrue (evalExpr_ok' hc) (ih hb) (ih h)
+        · rename_i v σ₂ hb
+          simp at h; obtain ⟨rfl, rfl⟩ := h
+          exact .whileReturn (evalExpr_ok' hc) (ih hb)
+        · simp at h
+      · rename_i hc
+        simp at h; obtain ⟨rfl, rfl⟩ := h
+        exact .whileFalse (evalExpr_ok' hc)
+      · simp at h
+    | .alloc x _ty szExpr =>
+      simp only [] at h
+      split at h
+      · simp at h
+      · rename_i sz hsz
+        split at h
+        · rename_i σ₂ hs
+          simp at h; obtain ⟨rfl, rfl⟩ := h
+          exact .alloc (evalExpr_ok' hsz) rfl hs
+        · simp at h
+      · simp at h
+    | .free e =>
+      simp only [] at h
+      split at h
+      · simp at h
+      · rename_i a he
+        split at h
+        · rename_i heap' hf
+          simp at h; obtain ⟨rfl, rfl⟩ := h
+          exact .free (evalExpr_ok' he) hf
+        · simp at h
+      · simp at h
+    | .arrSet arr idx val =>
+      simp only [] at h
+      split at h <;> (try simp at h)
+      rename_i a i vv harr hidx hval
+      split at h
+      · rename_i heap' hw
+        simp at h; obtain ⟨rfl, rfl⟩ := h
+        exact .arrSet (evalExpr_ok' harr) (evalExpr_ok' hidx) (evalExpr_ok' hval) hw
+      · simp at h
+    | .ret e =>
+      simp only [] at h
+      split at h
+      · simp at h
+      · rename_i v he
+        simp at h; obtain ⟨rfl, rfl⟩ := h
+        exact .ret (evalExpr_ok' he)
+    | .block stmts =>
+      exact .block (ih h)
+    | .callStmt name args =>
+      simp only [] at h
+      split at h
+      · simp at h
+      · rename_i fd hlook
+        split at h
+        · simp at h
+        · rename_i vs hargs
+          split at h
+          · simp at h
+          · rename_i frame hmk
+            obtain ⟨hlen, hframe⟩ := mkFrame_ok' hmk
+            match hbody : Stmt.interp n fd.body (σ.pushFrame frame) with
+            | (.error msg, σ₂) =>
+              rw [hbody] at h; simp at h
+            | (.ok rv₂, σ₂) =>
+              rw [hbody] at h
+              match hpop : σ₂.popFrame with
+              | some (fr, σ₃) =>
+                simp [hpop] at h; obtain ⟨rfl, rfl⟩ := h
+                have hpop' : (toStmtResult rv₂ σ₂).state.popFrame = some (fr, σ₃) := by
+                  cases rv₂ <;> exact hpop
+                exact .callStmt hlook (evalArgs_ok' hargs) hlen hframe (ih hbody) hpop'
+              | none =>
+                simp [hpop] at h
+    | .scope params args body =>
+      simp only [] at h
+      split at h
+      · simp at h
+      · rename_i vs hargs
+        split at h
+        · simp at h
+        · rename_i frame hmk
+          obtain ⟨hlen, hframe⟩ := mkFrame_ok' hmk
+          match hbody : Stmt.interp n body (σ.pushFrame frame) with
+          | (.error msg, σ₂) =>
+            rw [hbody] at h; simp at h
+          | (.ok rv₂, σ₂) =>
+            rw [hbody] at h
+            match hpop : σ₂.popFrame with
+            | some (fr, σ₃) =>
+              simp [hpop] at h; obtain ⟨rfl, rfl⟩ := h
+              have hpop' : (toStmtResult rv₂ σ₂).state.popFrame = some (fr, σ₃) := by
+                cases rv₂ <;> exact hpop
+              exact .scope (evalArgs_ok' hargs) hlen hframe (ih hbody) hpop'
+            | none =>
+              simp [hpop] at h
 
 end Radix
