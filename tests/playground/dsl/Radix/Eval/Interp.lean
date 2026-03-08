@@ -10,163 +10,168 @@ import Radix.Eval.Expr
 
 Executable interpreter using fuel to guarantee termination. This is the
 "runnable" counterpart to the relational `BigStep` semantics -- useful for
-testing and `#guard` assertions, but not the subject of the correctness proofs.
+testing and `#guard` assertions, and the subject of the interpreter
+correctness proofs (`Radix.Proofs.InterpCorrectness`).
 
-The interpreter is marked `partial` and returns `Option Value` to propagate
-`ret` statements: `none` means normal completion, `some v` means a return
-was encountered. Errors (type mismatches, missing variables, etc.) are
-reported via `ExceptT String`.
+The interpreter returns `Except String (Option Value) × PState`:
+- `.ok none` means normal completion
+- `.ok (some v)` means a `ret` was encountered with value `v`
+- `.error msg` means a runtime error
 -/
 
 namespace Radix
 
-/-- The interpreter monad: mutable `PState` with string error reporting. -/
-abbrev InterpM := ExceptT String (StateM PState)
+def evalExpr (e : Expr) (σ : PState) : Except String Value :=
+  match e.eval σ with
+  | some v => .ok v
+  | none => .error "failed to evaluate expression"
 
-def evalExpr (e : Expr) : InterpM Value := do
-  match e.eval (← get) with
-  | some v => return v
-  | none => throw s!"failed to evaluate expression"
+def evalArgs (args : List Expr) (σ : PState) : Except String (List Value) :=
+  args.mapM (fun e => evalExpr e σ)
 
-def evalArgs (args : List Expr) : InterpM (List Value) :=
-  args.mapM evalExpr
-
-private def mkFrame (params : List (String × Ty)) (args : List Value) : Except String Frame := do
+def mkFrame (params : List (String × Ty)) (args : List Value) : Except String Frame := do
   if params.length ≠ args.length then
     throw s!"arity mismatch: expected {params.length} args, got {args.length}"
   let env := (params.zip args).foldl (fun e (p, v) => e.set p.1 v) Env.empty
   return { env }
 
-/-- Fuel-based interpreter. Returns `none` for normal completion,
-`some v` when a `ret` statement is reached. -/
-partial def Stmt.interp (fuel : Nat) (s : Stmt) : InterpM (Option Value) := do
+/-- Result type for the interpreter: either success with optional return value
+and final state, or an error message. -/
+abbrev InterpResult := Except String (Option Value) × PState
+
+/-- Helper: thread a successful non-returning result into a continuation. -/
+@[inline] def andThen (r : InterpResult) (k : PState → InterpResult) : InterpResult :=
+  match r with
+  | (.ok none, σ') => k σ'
+  | (.ok (some v), σ') => (.ok (some v), σ')
+  | (.error e, σ') => (.error e, σ')
+
+/-- Fuel-based interpreter. Returns `(.ok none, σ')` for normal completion,
+`(.ok (some v), σ')` when a `ret` statement is reached, or `(.error msg, σ)` on error. -/
+def Stmt.interp (fuel : Nat) (s : Stmt) (σ : PState) : InterpResult :=
   match fuel with
-  | 0 => throw "out of fuel"
+  | 0 => (.error "out of fuel", σ)
   | fuel + 1 =>
     match s with
-    | .skip => return none
+    | .skip => (.ok none, σ)
 
     | .assign x e =>
-      let v ← evalExpr e
-      let σ ← get
-      match σ.setVar x v with
-      | some σ' => set σ'; return none
-      | none => throw s!"assign: no active frame"
+      match evalExpr e σ with
+      | .error msg => (.error msg, σ)
+      | .ok v =>
+        match σ.setVar x v with
+        | some σ' => (.ok none, σ')
+        | none => (.error "assign: no active frame", σ)
 
     | .decl x _ty e =>
-      let v ← evalExpr e
-      let σ ← get
-      match σ.setVar x v with
-      | some σ' => set σ'; return none
-      | none => throw s!"decl: no active frame"
+      match evalExpr e σ with
+      | .error msg => (.error msg, σ)
+      | .ok v =>
+        match σ.setVar x v with
+        | some σ' => (.ok none, σ')
+        | none => (.error "decl: no active frame", σ)
 
     | .seq s₁ s₂ =>
-      match ← s₁.interp fuel with
-      | some v => return some v
-      | none => s₂.interp fuel
+      andThen (s₁.interp fuel σ) (s₂.interp fuel)
 
     | .ite c t f =>
-      let v ← evalExpr c
-      match v with
-      | .bool true => t.interp fuel
-      | .bool false => f.interp fuel
-      | _ => throw "if: condition must be bool"
+      match evalExpr c σ with
+      | .error msg => (.error msg, σ)
+      | .ok (.bool true) => t.interp fuel σ
+      | .ok (.bool false) => f.interp fuel σ
+      | _ => (.error "if: condition must be bool", σ)
 
     | .while c b =>
-      let v ← evalExpr c
-      match v with
-      | .bool true =>
-        match ← b.interp fuel with
-        | some v => return some v
-        | none => s.interp fuel
-      | .bool false => return none
-      | _ => throw "while: condition must be bool"
+      match evalExpr c σ with
+      | .error msg => (.error msg, σ)
+      | .ok (.bool true) =>
+        andThen (b.interp fuel σ) (s.interp fuel)
+      | .ok (.bool false) => (.ok none, σ)
+      | _ => (.error "while: condition must be bool", σ)
 
     | .alloc x _ty szExpr =>
-      let v ← evalExpr szExpr
-      match v with
-      | .uint64 sz =>
-        let σ ← get
+      match evalExpr szExpr σ with
+      | .error msg => (.error msg, σ)
+      | .ok (.uint64 sz) =>
         let (a, heap') := σ.heap.alloc (Array.replicate sz.toNat (.uint64 0))
         let σ' := { σ with heap := heap' }
         match σ'.setVar x (.addr a) with
-        | some σ'' => set σ''; return none
-        | none => throw "alloc: no active frame"
-      | _ => throw "alloc: size must be uint64"
+        | some σ'' => (.ok none, σ'')
+        | none => (.error "alloc: no active frame", σ)
+      | _ => (.error "alloc: size must be uint64", σ)
 
     | .free e =>
-      let v ← evalExpr e
-      match v with
-      | .addr a =>
-        let σ ← get
+      match evalExpr e σ with
+      | .error msg => (.error msg, σ)
+      | .ok (.addr a) =>
         match σ.heap.free a with
-        | some heap' => set { σ with heap := heap' }; return none
-        | none => throw s!"free: invalid address {a}"
-      | _ => throw "free: expected address"
+        | some heap' => (.ok none, { σ with heap := heap' })
+        | none => (.error s!"free: invalid address {a}", σ)
+      | _ => (.error "free: expected address", σ)
 
     | .arrSet arr idx val =>
-      let va ← evalExpr arr
-      let vi ← evalExpr idx
-      let vv ← evalExpr val
-      match va, vi with
-      | .addr a, .uint64 i =>
-        let σ ← get
+      match evalExpr arr σ, evalExpr idx σ, evalExpr val σ with
+      | .ok (.addr a), .ok (.uint64 i), .ok vv =>
         match σ.heap.write a i.toNat vv with
-        | some heap' => set { σ with heap := heap' }; return none
-        | none => throw s!"arrSet: write failed at addr {a} index {i}"
-      | _, _ => throw "arrSet: expected address and uint64 index"
+        | some heap' => (.ok none, { σ with heap := heap' })
+        | none => (.error s!"arrSet: write failed at addr {a} index {i}", σ)
+      | .error msg, _, _ => (.error msg, σ)
+      | _, .error msg, _ => (.error msg, σ)
+      | _, _, .error msg => (.error msg, σ)
+      | _, _, _ => (.error "arrSet: expected address and uint64 index", σ)
 
     | .ret e =>
-      let v ← evalExpr e
-      return some v
+      match evalExpr e σ with
+      | .error msg => (.error msg, σ)
+      | .ok v => (.ok (some v), σ)
 
     | .block stmts =>
-      let rec go : List Stmt → InterpM (Option Value)
-        | [] => return none
-        | stmt :: rest => do
-          match ← stmt.interp fuel with
-          | some v => return some v
-          | none => go rest
-      go stmts
+      (stmts.foldl (· ;; ·) .skip).interp fuel σ
 
     | .callStmt name args =>
-      let σ ← get
       match σ.lookupFun name with
-      | none => throw s!"undefined function: {name}"
+      | none => (.error s!"undefined function: {name}", σ)
       | some fd =>
-        let vs ← evalArgs args
-        match mkFrame fd.params vs with
-        | .error msg => throw msg
-        | .ok frame =>
-          modify fun σ => σ.pushFrame frame
-          let _retVal ← fd.body.interp fuel  -- return value discarded for void calls
-          let σ' ← get
-          match σ'.popFrame with
-          | some (_, σ'') => set σ''; return none
-          | none => throw "callStmt: frame stack underflow"
+        match evalArgs args σ with
+        | .error msg => (.error msg, σ)
+        | .ok vs =>
+          match mkFrame fd.params vs with
+          | .error msg => (.error msg, σ)
+          | .ok frame =>
+            let σ₁ := σ.pushFrame frame
+            match fd.body.interp fuel σ₁ with
+            | (.error msg, _) => (.error msg, σ)
+            | (.ok _, σ₂) =>
+              match σ₂.popFrame with
+              | some (_, σ₃) => (.ok none, σ₃)
+              | none => (.error "callStmt: frame stack underflow", σ)
 
     | .scope params args body =>
-      let vs ← evalArgs args
-      match mkFrame params vs with
-      | .error msg => throw msg
-      | .ok frame =>
-        modify fun σ => σ.pushFrame frame
-        let _retVal ← body.interp fuel
-        let σ' ← get
-        match σ'.popFrame with
-        | some (_, σ'') => set σ''; return none
-        | none => throw "scope: frame stack underflow"
+      match evalArgs args σ with
+      | .error msg => (.error msg, σ)
+      | .ok vs =>
+        match mkFrame params vs with
+        | .error msg => (.error msg, σ)
+        | .ok frame =>
+          let σ₁ := σ.pushFrame frame
+          match body.interp fuel σ₁ with
+          | (.error msg, _) => (.error msg, σ)
+          | (.ok _, σ₂) =>
+            match σ₂.popFrame with
+            | some (_, σ₃) => (.ok none, σ₃)
+            | none => (.error "scope: frame stack underflow", σ)
+termination_by fuel
 
 /-- Run a program with the given fuel. -/
 def Program.run (p : Program) (fuel : Nat := 1000) : Except String PState :=
   let σ := PState.initFromProgram p
-  match p.main.interp fuel |>.run σ with
+  match p.main.interp fuel σ with
   | (.ok _, σ') => .ok σ'
   | (.error msg, _) => .error msg
 
 /-- Run a standalone statement with initial state. -/
 def Stmt.run (s : Stmt) (fuel : Nat := 1000) : Except String PState :=
-  match s.interp fuel |>.run {} with
+  match s.interp fuel {} with
   | (.ok _, σ') => .ok σ'
   | (.error msg, _) => .error msg
 
