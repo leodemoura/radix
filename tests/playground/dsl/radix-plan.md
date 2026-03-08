@@ -54,7 +54,7 @@ Key design choices:
 
 ## What Was Built
 
-**25 modules, ~4,500 lines of Lean 4.** Everything builds clean.
+**26 modules, ~5,000 lines of Lean 4.** Everything builds clean, zero sorry.
 
 ### Core Language (8 modules)
 ```
@@ -81,11 +81,12 @@ Radix/Opt/Inline.lean      — function inlining         (inline_correct)
 Each optimization is a function `Stmt → Stmt` with a mechanized correctness
 proof against the big-step semantics. No sorry in any optimization proof.
 
-### Formal Proofs (3 modules)
+### Formal Proofs (4 modules, 0 sorry)
 ```
-Radix/Proofs/Determinism.lean     — BigStep.det: big-step is deterministic (no sorry)
-Radix/Proofs/MemorySafety.lean    — no_use_after_free, no_double_free, read_within_bounds (no sorry)
-Radix/Proofs/TypeSafety.lean      — preservation and progress (4 sorry — WIP)
+Radix/Proofs/Determinism.lean     — BigStep.det: big-step is deterministic
+Radix/Proofs/MemorySafety.lean    — no_use_after_free, no_double_free, read_within_bounds
+Radix/Proofs/TypeSafety.lean      — preservation and progress
+Radix/Linear.lean                 — linear ownership typing, soundness, live_access, balanced
 ```
 
 ### Test Suite (5 modules, 85+ tests)
@@ -102,20 +103,17 @@ Radix/Tests/Opt.lean         — chained optimizations, inlining threshold, scop
 1. **5 verified compiler optimizations** — correctness theorems proved against big-step semantics, no sorry
 2. **Determinism theorem** — big-step evaluation is deterministic, fully proved
 3. **Memory safety properties** — no-use-after-free, no-double-free, read-within-bounds, fully proved
-4. **85+ executable tests** covering edge cases across all language features
-5. **Multi-agent coordination** worked — 21 issues tracked, dependency-ordered, reviewed and merged through PRs
-
-## What Remains
-
-Two open items:
-- **Type safety proofs** — preservation and progress theorem statements exist, proofs have 4 sorry
-- **Program-level memory safety** — current proofs are about the heap API; full program-level safety would need a linear type system
+4. **Type safety** — preservation and progress, fully proved
+5. **Linear ownership typing** — soundness theorem proving owned variables always point to live, distinct heap addresses; programs typed `∅ → ∅` are balanced (every alloc matched by free)
+6. **85+ executable tests** covering edge cases across all language features
+7. **Multi-agent coordination** worked — 21 issues tracked, dependency-ordered, reviewed and merged through PRs
+8. **Zero sorry** across the entire codebase
 
 ## Repository
 
 Private mirror of `leanprover/lean4` at `leodemoura/radix`.
 DSL lives at `tests/playground/dsl/`.
-Build: `lake build` (25 modules).
+Build: `lake build` (26 modules).
 
 ## Takeaways
 
@@ -124,4 +122,4 @@ in a few days. The dependency-ordered issue structure (5 waves) was key —
 it naturally parallelized work while maintaining coherence. The verification
 aspects (proofs, correctness theorems) were the most challenging part for
 the agents, requiring significant iteration, but the final proofs are
-genuine — no sorry in the critical paths.
+genuine — zero sorry in the entire codebase.
