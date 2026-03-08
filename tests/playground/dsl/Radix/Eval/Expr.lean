@@ -72,7 +72,7 @@ def Expr.eval (σ : PState) : Expr → Option Value
     let .str sv ← s.eval σ | none
     let .uint64 i ← idx.eval σ | none
     if i.toNat < sv.length then
-      some (.str (sv.get ⟨i.toNat⟩ |>.toString))
+      some (.str (String.Pos.Raw.get sv ⟨i.toNat⟩ |>.toString))
     else
       none
 

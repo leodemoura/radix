@@ -295,7 +295,7 @@ theorem BigStep.funs_preserved
   induction h with
   | skip | whileFalse _ | ret _ | free _ _ | arrSet _ _ _ _ => rfl
   | assign _ hs | decl _ hs => exact PState.setVar_funs hs
-  | alloc _ _ hs => exact PState.setVar_funs hs
+  | alloc _ _ hs => have h := PState.setVar_funs hs; exact h
   | seqNormal _ _ ih₁ ih₂ =>
     simp only [StmtResult.state] at ih₁; rw [ih₂, ih₁]
   | seqReturn _ ih => exact ih
@@ -632,9 +632,12 @@ theorem LinearOk.balanced
     (hlin : LinearOk ∅ s ∅)
     {σ σ' : PState}
     (hstep : BigStep σ s (.normal σ'))
-    (hinv : OwnershipInv σ O)
+    (hwf : ∀ a, σ.heap.store.contains a → a < σ.heap.nextAddr)
     (hwt : WellTypedFuns σ.funs) :
-    ∀ a, σ'.heap.store.contains a → a < σ'.heap.nextAddr :=
-  (LinearOk.soundness hlin hstep hinv hwt).1
+    ∀ a, σ'.heap.store.contains a → a < σ'.heap.nextAddr := by
+  have hinv : OwnershipInv σ ∅ :=
+    ⟨hwf, fun _ h => absurd h (HashSet.not_mem_empty),
+          fun _ _ h => absurd h (HashSet.not_mem_empty)⟩
+  exact (LinearOk.soundness hlin hstep hinv hwt).1
 
 end Radix

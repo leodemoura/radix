@@ -413,8 +413,8 @@ def test_inline_large :=
   let bigBody := (List.range 20).foldl (init := Stmt.skip) fun acc _ =>
     Stmt.seq acc (Stmt.assign "x" (Expr.lit (Value.uint64 1)))
   let funs : HashMap String FunDecl := ({} : HashMap String FunDecl).insert "big"
-    { name := "big", params := [], retTy := .unit, body := bigBody }
-  let s := Stmt.callStmt "big" []
+    { name := "big", params := List.nil, retTy := .unit, body := bigBody }
+  let s := Stmt.callStmt "big" List.nil
   s.inline funs 1
 
 -- Body too large, should remain a callStmt
@@ -426,9 +426,9 @@ open Std in
 -- Inlining depth 0 leaves calls as-is
 def test_inline_depth_zero :=
   let funs : HashMap String FunDecl := ({} : HashMap String FunDecl).insert "f"
-    { name := "f", params := [], retTy := .unit,
+    { name := "f", params := List.nil, retTy := .unit,
       body := Stmt.assign "x" (Expr.lit (Value.uint64 1)) }
-  let s := Stmt.callStmt "f" []
+  let s := Stmt.callStmt "f" List.nil
   s.inline funs 0
 
 #guard match test_inline_depth_zero with
