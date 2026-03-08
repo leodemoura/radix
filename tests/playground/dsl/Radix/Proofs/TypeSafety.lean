@@ -10,18 +10,18 @@ import Radix.Eval.Stmt
 
 /-! # Type Safety
 
-Progress and preservation theorems for the Radix type system.
+Preservation theorem for the Radix type system.
 
 **Preservation** (`Expr.preservation`): if a well-typed expression evaluates
-successfully, the result value has the expected type. This is fully proved
-except for `arrGet`, which requires a heap typing invariant (tracking element
-types for each heap address) that is beyond the current framework.
+successfully, the result value has the expected type. The proof requires a
+heap typing hypothesis (`hheapTy`) stating that heap contents match their
+declared element types — standard in type safety proofs for languages with
+mutable heap-allocated data.
 
-**Progress** (`Expr.progress`): a well-typed expression always evaluates to
-some value. This is `sorry`'d because it is not true as stated -- division
-by zero, out-of-bounds array access, and out-of-bounds string indexing are
-well-typed but produce `none`. A correct formulation would need either a
-totality judgment or strengthened preconditions.
+**Progress** is not included: "a well-typed expression always evaluates to
+some value" is false for Radix because `e / 0`, out-of-bounds `arr[i]`, and
+out-of-bounds `s[i]` are well-typed but evaluate to `none`. A correct
+formulation would require a totality judgment or strengthened preconditions.
 -/
 
 namespace Radix
@@ -93,10 +93,14 @@ expression `e`, and `e` evaluates to value `v`, then `v` has type `ty`.
 
 The proof proceeds by structural induction on `e`, delegating to
 `BinOp.eval_preserves_type` and `UnaryOp.eval_preserves_type` for
-operator cases. The `arrGet` case is `sorry`'d (requires heap typing). -/
+operator cases. The `arrGet` case uses `hheapTy`. -/
 theorem Expr.preservation (Γ : TyEnv) (sigs : FunSigs) (σ : PState)
     (e : Expr) (ty : Ty) (v : Value)
     (henv : ∀ x ty, Γ.get? x = some ty → ∃ v, σ.getVar x = some v ∧ Value.hasType v ty)
+    (hheapTy : ∀ (e : Expr) (a : Addr) (elemTy : Ty),
+      Expr.typeOf Γ sigs e = some (.array elemTy) →
+      Expr.eval σ e = some (.addr a) →
+      ∀ i v, σ.heap.read a i = some v → v.hasType elemTy)
     (hty : Expr.typeOf Γ sigs e = some ty)
     (heval : Expr.eval σ e = some v) :
     Value.hasType v ty := by
@@ -130,10 +134,22 @@ theorem Expr.preservation (Γ : TyEnv) (sigs : FunSigs) (σ : PState)
     rename_i w
     exact UnaryOp.eval_preserves_type (ih t w ht hw) hty heval
   | arrGet arr idx _ _ =>
-    -- Requires a heap typing invariant: if the array handle is well-typed
-    -- with element type `elemTy`, then all values stored in the heap at
-    -- that address have type `elemTy`. This is beyond our current framework.
-    sorry
+    simp only [Expr.typeOf] at hty
+    simp only [bind, Option.bind] at hty
+    cases h1 : Expr.typeOf Γ sigs arr <;> simp [h1] at hty
+    rename_i aty; cases aty <;> simp at hty
+    rename_i elemTy
+    cases h2 : Expr.typeOf Γ sigs idx <;> simp [h2] at hty
+    rename_i ity; cases ity <;> simp at hty; subst ty
+    simp only [Expr.eval] at heval
+    simp only [bind, Option.bind] at heval
+    cases h3 : Expr.eval σ arr <;> simp [h3] at heval
+    rename_i va; cases va <;> simp at heval
+    rename_i a
+    cases h4 : Expr.eval σ idx <;> simp [h4] at heval
+    rename_i vi; cases vi <;> simp at heval
+    rename_i i
+    exact hheapTy arr a elemTy h1 h3 i.toNat v heval
   | arrLen arr _ =>
     -- typeOf returns .uint64, eval produces .uint64 _
     simp only [Expr.typeOf] at hty
@@ -173,21 +189,15 @@ theorem Expr.preservation (Γ : TyEnv) (sigs : FunSigs) (σ : PState)
     obtain ⟨_, rfl⟩ := heval
     simp [Value.hasType]
 
-/-- Progress: a well-typed expression evaluates to some value.
+/-! ## Note on Progress
 
-This theorem as stated is not provable without additional assumptions:
-- Division/modulo by zero: `e / 0` is well-typed but `eval` returns `none`.
-- Array access: requires heap liveness and bounds checking invariants.
-- String access: requires string index bounds invariants.
+The theorem "a well-typed expression always evaluates to some value" does
+not hold for Radix as formulated. Counter-examples:
+- `e / 0` is well-typed (`uint64`) but `eval` returns `none`
+- `arr[i]` may fail if `i` is out of bounds or `arr` has been freed
+- `s[i]` may fail if `i ≥ s.length`
 
-A correct formulation would either exclude partial operations from the
-type system, add a totality/definedness judgment, or strengthen the
-preconditions with heap and bounds invariants. -/
-theorem Expr.progress (Γ : TyEnv) (sigs : FunSigs) (σ : PState)
-    (e : Expr) (ty : Ty)
-    (henv : ∀ x ty, Γ.get? x = some ty → ∃ v, σ.getVar x = some v ∧ Value.hasType v ty)
-    (hty : Expr.typeOf Γ sigs e = some ty) :
-    ∃ v, Expr.eval σ e = some v := by
-  sorry
+A correct formulation would require a totality judgment or strengthened
+preconditions (non-zero divisors, heap liveness, bounds invariants). -/
 
 end Radix
