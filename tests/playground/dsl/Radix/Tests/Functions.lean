@@ -140,7 +140,7 @@ def factVerifyProgram : Program := {
 def zeroArgProgram : Program := {
   funs := [
     { name := "getAnswer"
-      params := []
+      params := List.nil
       retTy := .uint64
       body := `[RStmt|
         result := 42;
@@ -157,7 +157,7 @@ def zeroArgProgram : Program := {
 
 -- Calling undefined function produces error
 def undefFuncProgram : Program := {
-  funs := []
+  funs := List.nil
   main := `[RStmt|
     notAFunction(1);
   ]
@@ -210,7 +210,7 @@ def seqCallProgram : Program := {
 def frameIsolationProgram : Program := {
   funs := [
     { name := "readOuter"
-      params := []
+      params := List.nil
       retTy := .uint64
       body :=
         -- Try to read "secret" which is in the main frame, not the function frame
