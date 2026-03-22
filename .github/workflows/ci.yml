@@ -448,7 +448,7 @@ jobs:
     runs-on: ubuntu-latest
     needs: build
     steps:
-      - uses: actions/download-artifact@v7
+      - uses: actions/download-artifact@v8
         with:
           path: artifacts
       - name: Release
@@ -480,7 +480,7 @@ jobs:
           # Doesn't seem to be working when additionally fetching from lean4-nightly
           #filter: tree:0
           token: ${{ secrets.PUSH_NIGHTLY_TOKEN }}
-      - uses: actions/download-artifact@v7
+      - uses: actions/download-artifact@v8
         with:
           path: artifacts
       - name: Prepare Nightly Release
